@@ -17,3 +17,4 @@ ml2mqtt/settings.json
 # Environment
 .env
 env/
+.venv/

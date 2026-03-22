@@ -1,0 +1,17 @@
+services:
+  ml2mqtt:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "5000:5000"
+    environment:
+      MQTT_SERVER: mqtt-mos.boby.uk
+      MQTT_PORT: 1883
+      MQTT_USERNAME: ""
+      MQTT_PASSWORD: ""
+      ML2MQTT_DATA_DIR: /data
+      ML2MQTT_ENABLE_INGRESS: "true"
+    volumes:
+      - ./data:/data
+    restart: unless-stopped

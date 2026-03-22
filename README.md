@@ -4,6 +4,39 @@
 
 ML2MQTT is a user-friendly machine learning system designed to integrate seamlessly with MQTT. It is tailored for users with minimal programming or machine learning expertise, making it easy to set up while still being powerful. Knowledge of NodeRed and MQTT is required.
 
+### Standalone Docker Quick Start
+
+ML2MQTT can now run as a regular Docker container outside Home Assistant while keeping the existing Home Assistant workflow intact.
+
+- Copy `ml2mqtt/settings.example.json` to `ml2mqtt/settings.json` if you want file-based config, or set `MQTT_SERVER`, `MQTT_PORT`, `MQTT_USERNAME`, and `MQTT_PASSWORD` as environment variables.
+- Persist model data by mounting a volume to `/data`.
+- Home Assistant ingress handling is disabled by default in standalone mode and still enabled automatically when the add-on's `/data/options.json` is present.
+
+Run with Docker Compose:
+
+```yaml
+docker compose up --build
+```
+
+Run with Docker directly:
+
+```bash
+docker build -t ml2mqtt .
+docker run --rm -p 5000:5000 \
+  -e MQTT_SERVER=mosquitto \
+  -e MQTT_PORT=1883 \
+  -v ./data:/data \
+  ml2mqtt
+```
+
+For local Python development, use `uv`:
+
+```bash
+cd ml2mqtt
+uv sync
+uv run python app.py
+```
+
 ### What Problems Does Machine Learning Solve?
 
 Traditional programming relies on fixed sets of rules, which can make it difficult to account for multiple sensors and complex conditions. Machine learning simplifies this by learning from sensor data and automatically identifying patterns. 

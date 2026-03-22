@@ -4,7 +4,6 @@ from flask import Flask, send_file, abort
 from ModelManager import ModelManager
 from io import StringIO
 import logging
-import os
 from pathlib import Path
 from datetime import datetime, timezone
 from routes.model_routes import init_model_routes
@@ -52,7 +51,11 @@ for handler in logging.getLogger().handlers:
 
 
 app = Flask(__name__, static_url_path='')
-app.wsgi_app = IngressMiddleware(app.wsgi_app)
+config = Config()
+if config.isIngressEnabled():
+    app.wsgi_app = IngressMiddleware(app.wsgi_app)
+
+dataPath = Path(config.getDataPath())
 
 @app.context_processor
 def inject_globals():
@@ -69,11 +72,8 @@ def inject_globals():
         min=min,
         max=max
     )
-# Initialize configuration and services
-config = Config()
-
 mqttClient = MqttClient(config.getValue("mqtt"))
-modelManager = ModelManager(mqttClient, config.getDataPath() + "/models")
+modelManager = ModelManager(mqttClient, str(dataPath / "models"))
 
 # Register blueprints
 app.register_blueprint(init_model_routes(modelManager))
@@ -81,13 +81,12 @@ app.register_blueprint(init_log_routes(logStream))
 
 @app.route('/download_model_db/<model_slug>')
 def download_model_db(model_slug: str):
-    data_path = config.getDataPath()
     # Ensure model_slug is safe to use as a file name component (basic check)
     if not model_slug or ".." in model_slug or "/" in model_slug:
         abort(400, description="Invalid model slug.")
 
     db_file_name = model_slug + ".db"
-    db_file_path = Path(data_path) / "models" / db_file_name
+    db_file_path = dataPath / "models" / db_file_name
 
     if not db_file_path.is_file():
         abort(404, description="Database file not found.")
@@ -97,3 +96,7 @@ def download_model_db(model_slug: str):
         as_attachment=True,
         download_name=db_file_name
     )
+
+
+if __name__ == "__main__":
+    app.run(host=config.getHost(), port=config.getPort())

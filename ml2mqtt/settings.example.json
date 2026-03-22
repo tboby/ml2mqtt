@@ -1,0 +1,14 @@
+{
+  "mqtt": {
+    "server": "mosquitto",
+    "port": 1883,
+    "username": "",
+    "password": ""
+  },
+  "app": {
+    "data_path": "/data",
+    "enable_ingress": false,
+    "host": "0.0.0.0",
+    "port": 5000
+  }
+}
