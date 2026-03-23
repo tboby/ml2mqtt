@@ -1,0 +1,8 @@
+{
+  "name": "ML2MQTT",
+  "content_in_root": false,
+  "domains": [
+    "ml2mqtt"
+  ],
+  "render_readme": true
+}

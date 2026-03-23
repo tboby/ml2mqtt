@@ -2,7 +2,7 @@
 
 ### What is ML2MQTT?
 
-ML2MQTT is a user-friendly machine learning system designed to integrate seamlessly with MQTT. It is tailored for users with minimal programming or machine learning expertise, making it easy to set up while still being powerful. Knowledge of NodeRed and MQTT is required.
+ML2MQTT is a user-friendly machine learning system designed to integrate seamlessly with MQTT. It is tailored for users with minimal programming or machine learning expertise, making it easy to set up while still being powerful. Knowledge of MQTT helps, and Node-RED is now an optional legacy compatibility path rather than the primary setup flow.
 
 ### Standalone Docker Quick Start
 
@@ -37,6 +37,27 @@ uv sync
 uv run python app.py
 ```
 
+### Home Assistant-First Setup
+
+For Home Assistant users, the preferred path is now:
+
+1. Run the ML2MQTT app or add-on so the Flask UI and MQTT runtime are available.
+2. Install the `ML2MQTT` custom integration from HACS.
+3. Point the integration at the ML2MQTT app API.
+4. Either bind Home Assistant entities to an existing model or create a new model from selected entities.
+5. Let the integration create the trainer select, prediction sensor, confidence sensor, and bridge status sensor automatically.
+
+The existing Node-RED export remains available as a compatibility path for raw MQTT or manual orchestration setups.
+
+### Adapter API Access Model
+
+The first adapter API release is a versioned local HTTP API under `/api/v1/*` on the ML2MQTT app.
+
+- Intended use: trusted local Home Assistant or Docker environments.
+- Initial auth model: no app-side auth is enabled by default.
+- Expected deployment: provide the Home Assistant integration with a reachable ML2MQTT app URL.
+- Runtime transport: MQTT remains the prediction and training transport; the app API is only for model discovery, creation, binding, and bridge status.
+
 ### What Problems Does Machine Learning Solve?
 
 Traditional programming relies on fixed sets of rules, which can make it difficult to account for multiple sensors and complex conditions. Machine learning simplifies this by learning from sensor data and automatically identifying patterns. 
@@ -64,11 +85,19 @@ Upon launching you should see this window
 
 **Step 1: Create Your Model**
 - Click **Add Model** and enter a name for your model (e.g., "Paul-Presence") and add labels for each room.
-- Specify the number of input sensors. In my case it's 6.
+- If you're creating the model from the Home Assistant integration, select the source entities there and let ML2MQTT derive the initial input count from that selection.
+- If you're using the app UI directly, specify the initial number of input sensors manually. In my example it's 6.
 
 ![Create model image](images/create-model.png)
 
-**Step 2: Configure Node-RED**
+**Step 2: Bind Entities in Home Assistant (Preferred)**
+- Install the ML2MQTT custom integration through HACS.
+- Add the integration and enter the reachable ML2MQTT app URL.
+- Choose an existing model to bind, or create a new model from selected Home Assistant entities.
+- The integration will automatically create the trainer select, prediction sensor, confidence sensor, and bridge status sensor.
+- When a bound source entity changes, the integration publishes the same snapshot payload that ML2MQTT already understands over MQTT.
+
+**Legacy Step 2: Configure Node-RED (Compatibility Path)**
 - Click **Edit** and go to Node-RED. The source code for a NodeRed flow is automatically created for you.
 
 ![NodeRed Settings](images/nodered.png)
@@ -102,7 +131,8 @@ You'll still have one red triangle for the Trainer node (that's labeled Ignore e
 If no data is appearing, ensure that your sensors are actively sending data. You can also check the Logs panel for any error messages.
 
 **Step 4: Training Your Model**
-- Go to the Home Assistant dashboard and add the source entities, the trainer selector, and the prediction sensor.
+- If you're using the Home Assistant integration, add the auto-created trainer, prediction, confidence, and bridge status entities to a dashboard.
+- If you're using the legacy Node-RED path, add the source entities, the trainer selector, and the prediction sensor manually.
 - Walk around your home and label each room. Select the correct room label on the training selector, and let ML2MQTT record observations. When you're about to change rooms, select disabled first and only start training once you're in the new room to avoid conflicting labels.
 
 ![Home Assistant Dashboard](images/homeassistant-training.png)
@@ -136,6 +166,7 @@ Coming soon:
 - **Explicit match:** If source sensors equal some set of values, ignore what the ML model predicts and provide an explicit label.
 
 ### Troubleshooting Tips
+- If you are using the Home Assistant integration, confirm the app API URL is reachable from Home Assistant and that the configured MQTT broker matches ML2MQTT.
 - Ensure that your sensors are consistently sending data to MQTT. The NodeRed debug node can help with this.
 - Keep your labels simple and focused to improve model accuracy. The higher the number of labels, the greater the likelihood of an incorrect guess.
 - If you find your results are noisy (e.g. labels jumping back and forth), just train further in that area.

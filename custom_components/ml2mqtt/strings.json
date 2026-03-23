@@ -1,0 +1,43 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to ML2MQTT",
+        "description": "Enter the reachable ML2MQTT app URL for model discovery and binding.",
+        "data": {
+          "app_url": "ML2MQTT app URL"
+        }
+      },
+      "mode": {
+        "title": "Model setup",
+        "description": "Choose whether to bind an existing model or create a new one from selected Home Assistant entities.",
+        "data": {
+          "mode": "Setup mode"
+        }
+      },
+      "bind_existing": {
+        "title": "Bind existing model",
+        "data": {
+          "model_id": "Model",
+          "source_entities": "Source entities"
+        }
+      },
+      "create_new": {
+        "title": "Create and bind model",
+        "data": {
+          "model_name": "Model name",
+          "labels": "Labels (comma separated)",
+          "mqtt_topic": "MQTT topic",
+          "default_value": "Unknown sensor fallback value",
+          "source_entities": "Source entities"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to the ML2MQTT app API."
+    },
+    "abort": {
+      "already_configured": "This ML2MQTT model is already configured."
+    }
+  }
+}

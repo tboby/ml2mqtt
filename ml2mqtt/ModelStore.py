@@ -211,6 +211,10 @@ class ModelStore:
             observations.append(ModelObservation(timeVal, label, sensorValues))
         return observations
 
+    def getObservationCount(self) -> int:
+        row = self._cursor.execute("SELECT COUNT(*) FROM Observations").fetchone()
+        return int(row[0]) if row is not None else 0
+
     def getEntityKeys(self):
         return self._entityKeys
 

@@ -16,8 +16,134 @@ from datetime import timedelta, datetime
 
 logger = logging.getLogger("ml2mqtt.routes.model")
 model_bp = Blueprint('model', __name__)
+API_VERSION = 1
+
+
+def _parse_labels(raw_labels: Any) -> List[str]:
+    labels: List[str] = []
+
+    if isinstance(raw_labels, list):
+        labels = raw_labels
+    elif isinstance(raw_labels, str):
+        raw_labels = raw_labels.strip()
+        if raw_labels:
+            try:
+                parsed = json.loads(raw_labels)
+                if isinstance(parsed, list):
+                    labels = parsed
+                else:
+                    labels = [item.strip() for item in raw_labels.split(",") if item.strip()]
+            except json.JSONDecodeError:
+                labels = [item.strip() for item in raw_labels.split(",") if item.strip()]
+
+    return sorted(set(str(label).strip() for label in labels if str(label).strip()))
+
+
+def _coerce_int(value: Any, default: Optional[int] = None) -> Optional[int]:
+    if value in [None, "", []]:
+        return default
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    if isinstance(value, str) and value.strip().isdigit():
+        return int(value.strip())
+    raise ValueError("Expected an integer value")
+
+
+def _default_binding_entities(model_name: str) -> Dict[str, Any]:
+    safe_slug = slugify(model_name or "model").replace("-", "_")
+    prefix = f"ml2mqtt_{safe_slug}"
+    return {
+        "trainer": {
+            "entity_id": f"select.{prefix}_trainer",
+            "name": f"{model_name} Trainer",
+        },
+        "outputs": {
+            "prediction": {
+                "entity_id": f"sensor.{prefix}_prediction",
+                "name": f"{model_name} Prediction",
+            },
+            "confidence": {
+                "entity_id": f"sensor.{prefix}_confidence",
+                "name": f"{model_name} Confidence",
+            },
+            "status": {
+                "entity_id": f"sensor.{prefix}_bridge_status",
+                "name": f"{model_name} Bridge Status",
+            },
+        },
+    }
+
+
+def _build_binding_payload(model_name: str, payload: Dict[str, Any], existing: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+    binding: Dict[str, Any] = {}
+    if isinstance(existing, dict):
+        binding.update(existing)
+
+    explicit_binding = payload.get("binding")
+    if isinstance(explicit_binding, dict):
+        binding.update(explicit_binding)
+
+    if isinstance(payload.get("source_entities"), list):
+        binding["sources"] = payload["source_entities"]
+
+    if not binding:
+        return None
+
+    defaults = _default_binding_entities(model_name)
+    binding.setdefault("trainer", defaults["trainer"])
+
+    outputs = binding.get("outputs", {}) if isinstance(binding.get("outputs"), dict) else {}
+    for output_name, output_value in defaults["outputs"].items():
+        outputs.setdefault(output_name, output_value)
+    binding["outputs"] = outputs
+
+    adapter = binding.get("adapter", {}) if isinstance(binding.get("adapter"), dict) else {}
+    adapter.setdefault("kind", payload.get("adapter_kind", "home_assistant"))
+    binding["adapter"] = adapter
+
+    return binding
+
+
+def _serialize_model(model_name: str, model: Any, include_bridge: bool = False) -> Dict[str, Any]:
+    payload = model.getModelDetail() if include_bridge else model.getModelSummary()
+    payload["id"] = model_name
+    payload["slug"] = slugify(model_name)
+    payload["name"] = model.getName() or model_name
+    return payload
 
 def init_model_routes(model_manager: ModelManager):
+    def createOrConfigureModel(
+        modelName: str,
+        mqttTopic: str,
+        labels: List[str],
+        inputCount: int,
+        defaultValue: Any,
+        binding: Optional[Dict[str, Any]] = None,
+    ):
+        newModel = model_manager.addModel(modelName)
+        newModel.setMqttTopic(mqttTopic)
+        newModel.setName(modelName)
+        newModel.setModelConfig("labels", sorted(list(set(labels))))
+        newModel.setModelConfig("input_count", inputCount)
+        if binding is not None:
+            newModel.setModelBinding(binding)
+        newModel.addPreprocessor("type_caster", { 'sensor': [{"SELECT_ALL": True }]})
+        newModel.addPreprocessor("null_handler", { 'sensor': [{"SELECT_ALL": True }], 'replacementType': 'float', 'nullReplacement': defaultValue})
+        newModel.addPostprocessor("only_diff", {})
+        newModel.setLearningType("EAGER")
+        newModel.subscribeToMqttTopics()
+        return newModel
+
+    def getInputCount(rawInputCount: Any, sourceCount: int) -> int:
+        parsedInputCount = _coerce_int(rawInputCount, None)
+        if parsedInputCount is None:
+            return sourceCount if sourceCount > 0 else 1
+        if sourceCount > 0 and parsedInputCount != sourceCount:
+            raise ValueError("input_count must match the number of selected source entities")
+        return parsedInputCount
+
     @model_bp.route("/")
     def home() -> str:
         models = []
@@ -43,35 +169,120 @@ def init_model_routes(model_manager: ModelManager):
             modelName = request.form.get("model_name")
             defaultValue = request.form.get("default_value")
             mqttTopic = request.form.get("mqtt_topic")
-            labels = []
-            try:
-                labels = json.loads(request.form.get("labels", "[]"))
-                if not isinstance(labels, list):
-                    raise ValueError
-                labels = sorted(set(labels))
-            except (json.JSONDecodeError, ValueError):
-                pass
-
-            logger.error(f"Request {request.form}")
+            labels = _parse_labels(request.form.get("labels", "[]"))
 
             if modelName is None:
                 abort(400, "Missing model name")
-            if mqttTopic is None:
-                abort(400, "Missing MQTT topic")
-            newModel = model_manager.addModel(modelName)
-            newModel.setMqttTopic(mqttTopic)
-            newModel.setName(modelName)
-            newModel.setModelConfig("labels", sorted(list(set(labels))))
-            newModel.setModelConfig("input_count", int(request.form.get("input_count")))
-            newModel.addPreprocessor("type_caster", { 'sensor': [{"SELECT_ALL": True }]})
-            newModel.addPreprocessor("null_handler", { 'sensor': [{"SELECT_ALL": True }], 'replacementType': 'float', 'nullReplacement': defaultValue})
-            newModel.addPostprocessor("only_diff", {})
-            newModel.setLearningType("EAGER")
-            newModel.subscribeToMqttTopics()
+            modelName = modelName.strip()
+            if not modelName:
+                abort(400, "Missing model name")
+
+            if mqttTopic is None or not mqttTopic.strip():
+                mqttTopic = f"ml2mqtt/{slugify(modelName)}"
+
+            inputCount = getInputCount(request.form.get("input_count"), 0)
+            createOrConfigureModel(modelName, mqttTopic.strip(), labels, inputCount, defaultValue)
 
             return redirect(url_for("model.home"))
 
         return render_template("create-model.html", title="Add Model", active_page="create_model")
+
+    @model_bp.route(f"/api/v{API_VERSION}/models", methods=["GET"])
+    def apiListModels() -> Response:
+        models = []
+        for modelName, model in model_manager.getModels().items():
+            models.append(_serialize_model(modelName, model, include_bridge=False))
+        return jsonify({"models": models, "version": API_VERSION})
+
+    @model_bp.route(f"/api/v{API_VERSION}/models", methods=["POST"])
+    def apiCreateModel() -> Response:
+        try:
+            data = request.get_json()
+            if not isinstance(data, dict):
+                return jsonify({"error": "Missing or invalid JSON payload"}), 400
+
+            modelName = str(data.get("model_name") or "").strip()
+            if not modelName:
+                return jsonify({"error": "model_name is required"}), 400
+            if model_manager.modelExists(modelName):
+                return jsonify({"error": f"Model '{modelName}' already exists"}), 409
+
+            mqttTopic = str(data.get("mqtt_topic") or f"ml2mqtt/{slugify(modelName)}").strip()
+            labels = _parse_labels(data.get("labels", []))
+            defaultValue = data.get("default_value", 9999)
+            binding = _build_binding_payload(modelName, data)
+            sourceCount = len(binding.get("sources", [])) if binding else 0
+            inputCount = getInputCount(data.get("input_count"), sourceCount)
+
+            model = createOrConfigureModel(modelName, mqttTopic, labels, inputCount, defaultValue, binding)
+            return jsonify(_serialize_model(modelName, model, include_bridge=True)), 201
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
+        except Exception as e:
+            logger.exception("Error creating model from adapter API")
+            return jsonify({"error": str(e)}), 500
+
+    @model_bp.route(f"/api/v{API_VERSION}/models/<string:modelName>", methods=["GET"])
+    def apiGetModel(modelName: str) -> Response:
+        if not model_manager.modelExists(modelName):
+            return jsonify({"error": f"Model '{modelName}' not found"}), 404
+        model = model_manager.getModel(modelName)
+        return jsonify(_serialize_model(modelName, model, include_bridge=True))
+
+    @model_bp.route(f"/api/v{API_VERSION}/models/<string:modelName>/binding", methods=["GET"])
+    def apiGetModelBinding(modelName: str) -> Response:
+        if not model_manager.modelExists(modelName):
+            return jsonify({"error": f"Model '{modelName}' not found"}), 404
+        model = model_manager.getModel(modelName)
+        return jsonify({
+            "binding": model.getModelBinding(),
+            "compatibility_status": model.getBindingStatus(),
+            "bridge_status": model.getBridgeStatus(),
+        })
+
+    @model_bp.route(f"/api/v{API_VERSION}/models/<string:modelName>/binding", methods=["PUT"])
+    def apiSetModelBinding(modelName: str) -> Response:
+        if not model_manager.modelExists(modelName):
+            return jsonify({"error": f"Model '{modelName}' not found"}), 404
+
+        data = request.get_json()
+        if not isinstance(data, dict):
+            return jsonify({"error": "Missing or invalid JSON payload"}), 400
+
+        model = model_manager.getModel(modelName)
+        try:
+            binding = _build_binding_payload(modelName, data, existing=model.getModelBinding())
+            if binding is None:
+                return jsonify({"error": "binding or source_entities is required"}), 400
+
+            savedBinding = model.setModelBinding(binding)
+            return jsonify({
+                "binding": savedBinding,
+                "compatibility_status": model.getBindingStatus(),
+                "bridge_status": model.getBridgeStatus(),
+            })
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
+
+    @model_bp.route(f"/api/v{API_VERSION}/models/<string:modelName>/binding", methods=["DELETE"])
+    def apiClearModelBinding(modelName: str) -> Response:
+        if not model_manager.modelExists(modelName):
+            return jsonify({"error": f"Model '{modelName}' not found"}), 404
+
+        model = model_manager.getModel(modelName)
+        model.clearModelBinding()
+        return jsonify({
+            "binding": None,
+            "compatibility_status": model.getBindingStatus(),
+            "bridge_status": model.getBridgeStatus(),
+        })
+
+    @model_bp.route(f"/api/v{API_VERSION}/models/<string:modelName>/bridge-status", methods=["GET"])
+    def apiGetBridgeStatus(modelName: str) -> Response:
+        if not model_manager.modelExists(modelName):
+            return jsonify({"error": f"Model '{modelName}' not found"}), 404
+        model = model_manager.getModel(modelName)
+        return jsonify(model.getBridgeStatus())
 
     @model_bp.route("/delete-model/<string:modelName>/", methods=["POST"])
     def deleteModel(modelName: str) -> Response:

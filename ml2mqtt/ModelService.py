@@ -1,5 +1,7 @@
 import logging
 import json
+import time
+from copy import deepcopy
 from typing import Any, Dict, List, Optional, Union
 
 from ModelStore import ModelStore, ModelObservation, EntityKey
@@ -115,6 +117,11 @@ class ModelService:
             entities: List[Dict[str, Any]] = json.loads(messageStr)
         except json.JSONDecodeError:
             self._logger.warning("Invalid JSON: %s", messageStr)
+            self.updateBridgeStatus({
+                "last_input_at": time.time(),
+                "last_error": "invalid_json",
+                "mqtt_connected": self._mqttClient._connected,
+            })
             return
 
         label: str = DISABLED_LABEL
@@ -125,6 +132,13 @@ class ModelService:
                 label = entity["label"]
             elif "entity_id" in entity and "state" in entity:
                 entityMap[entity["entity_id"]] = entity["state"]
+
+        self.updateBridgeStatus({
+            "last_input_at": time.time(),
+            "last_label": label,
+            "last_error": None,
+            "mqtt_connected": self._mqttClient._connected,
+        })
 
         previousEntityMap = self._modelstore.getDict("mqtt_observations")
         if "history" in previousEntityMap:
@@ -178,6 +192,12 @@ class ModelService:
 
         topic = self.getMqttTopic()
         self._mqttClient.publish(f"{topic}/state", json.dumps({"state": prediction, "confidence": confidence}))
+        self.updateBridgeStatus({
+            "last_prediction_at": time.time(),
+            "last_prediction": prediction,
+            "last_confidence": confidence,
+            "mqtt_connected": self._mqttClient._connected,
+        })
         self._logger.info(f"Predicted label: {prediction} with confidence {confidence}")
 
     def getMqttTopic(self) -> str:
@@ -197,6 +217,9 @@ class ModelService:
 
     def getModelSize(self) -> int:
         return self._modelstore.getModelSize()
+
+    def getObservationCount(self) -> int:
+        return self._modelstore.getObservationCount()
 
     def getLabels(self) -> List[str]:
         return self._modelstore.getLabels() + self.getModelConfig("labels", [])
@@ -372,6 +395,209 @@ class ModelService:
             return previousObservations['history']
         else:
             return []
+
+    def _normalizeBindingEntity(self, entity: Any) -> Optional[Dict[str, Any]]:
+        if entity is None:
+            return None
+
+        if isinstance(entity, str):
+            entity_id = entity.strip()
+            if not entity_id:
+                return None
+            return {"entity_id": entity_id, "name": entity_id}
+
+        if not isinstance(entity, dict):
+            return None
+
+        entity_id = str(entity.get("entity_id") or entity.get("id") or "").strip()
+        if not entity_id:
+            return None
+
+        normalized = {
+            "entity_id": entity_id,
+            "name": str(entity.get("name") or entity_id),
+        }
+        for key in ("device_id", "area_id", "attribute", "domain"):
+            if entity.get(key) is not None:
+                normalized[key] = entity[key]
+        return normalized
+
+    def _normalizeBindingSources(self, sources: Any) -> List[Dict[str, Any]]:
+        if not isinstance(sources, list):
+            return []
+
+        normalized: List[Dict[str, Any]] = []
+        seen = set()
+        for source in sources:
+            sourceEntry = self._normalizeBindingEntity(source)
+            if sourceEntry is None:
+                continue
+            entityId = sourceEntry["entity_id"]
+            if entityId in seen:
+                continue
+            seen.add(entityId)
+            normalized.append(sourceEntry)
+        return normalized
+
+    def _normalizeBindingOutputs(self, outputs: Any) -> Dict[str, Dict[str, Any]]:
+        if not isinstance(outputs, dict):
+            return {}
+
+        normalized: Dict[str, Dict[str, Any]] = {}
+        for name, entry in outputs.items():
+            normalizedEntry = self._normalizeBindingEntity(entry)
+            if normalizedEntry is not None:
+                normalized[name] = normalizedEntry
+        return normalized
+
+    def _getBindingSourceIds(self, binding: Optional[Dict[str, Any]]) -> List[str]:
+        if not binding:
+            return []
+        return [source["entity_id"] for source in binding.get("sources", []) if source.get("entity_id")]
+
+    def _buildCompatibilityStatus(self, previousBinding: Optional[Dict[str, Any]], binding: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        if not binding:
+            return {
+                "state": "unbound",
+                "warnings": [],
+                "retraining_required": False,
+                "updated_at": time.time(),
+            }
+
+        newSources = self._getBindingSourceIds(binding)
+        previousSources = self._getBindingSourceIds(previousBinding)
+        learnedSources = [entity.name for entity in self._modelstore.getEntityKeys()]
+
+        warnings: List[Dict[str, str]] = []
+
+        def add_warning(code: str, message: str) -> None:
+            if code not in {warning["code"] for warning in warnings}:
+                warnings.append({"code": code, "message": message})
+
+        if previousSources and previousSources != newSources:
+            if set(previousSources) != set(newSources):
+                add_warning(
+                    "source_membership_changed",
+                    "Bound source entities changed. Existing training data may no longer match the selected inputs.",
+                )
+            else:
+                add_warning(
+                    "source_order_changed",
+                    "Bound source entity order changed. Existing training data may need retraining to stay aligned.",
+                )
+
+        if learnedSources and newSources and learnedSources != newSources:
+            if set(learnedSources) != set(newSources):
+                add_warning(
+                    "learned_sources_mismatch",
+                    "Bound source entities do not match the entities seen in stored observations.",
+                )
+            else:
+                add_warning(
+                    "learned_source_order_mismatch",
+                    "Bound source entity order differs from the entity order learned by the stored model.",
+                )
+
+        return {
+            "state": "warning" if warnings else "ready",
+            "warnings": warnings,
+            "retraining_required": len(warnings) > 0,
+            "updated_at": time.time(),
+        }
+
+    def _normalizeBinding(self, binding: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        if binding is None:
+            return None
+        if not isinstance(binding, dict):
+            raise ValueError("Binding payload must be a JSON object")
+
+        normalized = {
+            "version": int(binding.get("version", 1)),
+            "sources": self._normalizeBindingSources(binding.get("sources", [])),
+            "trainer": self._normalizeBindingEntity(binding.get("trainer")),
+            "outputs": self._normalizeBindingOutputs(binding.get("outputs", {})),
+            "adapter": binding.get("adapter", {}) if isinstance(binding.get("adapter", {}), dict) else {},
+            "updated_at": time.time(),
+        }
+        return normalized
+
+    def getModelBinding(self) -> Optional[Dict[str, Any]]:
+        binding = self.getModelConfig("binding", None)
+        if isinstance(binding, dict) and binding:
+            return deepcopy(binding)
+        return None
+
+    def setModelBinding(self, binding: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        normalized = self._normalizeBinding(binding)
+        previousBinding = self.getModelBinding()
+
+        if normalized is None:
+            current = self._modelstore.getDict("config")
+            current.pop("binding", None)
+            self._modelstore.saveDict("config", current)
+            return None
+
+        normalized["compatibility_status"] = self._buildCompatibilityStatus(previousBinding, normalized)
+        self.setModelConfig("binding", normalized)
+        return deepcopy(normalized)
+
+    def clearModelBinding(self) -> None:
+        self.setModelBinding(None)
+
+    def getBindingStatus(self) -> Dict[str, Any]:
+        binding = self.getModelBinding()
+        if not binding:
+            return {
+                "state": "unbound",
+                "warnings": [],
+                "retraining_required": False,
+            }
+        return deepcopy(binding.get("compatibility_status", {
+            "state": "ready",
+            "warnings": [],
+            "retraining_required": False,
+        }))
+
+    def updateBridgeStatus(self, updates: Dict[str, Any]) -> Dict[str, Any]:
+        current = self._modelstore.getDict("bridge_status")
+        current.update(updates)
+        current["mqtt_connected"] = self._mqttClient._connected
+        current["updated_at"] = time.time()
+        self._modelstore.saveDict("bridge_status", current)
+        return deepcopy(current)
+
+    def getBridgeStatus(self) -> Dict[str, Any]:
+        bridgeStatus = self._modelstore.getDict("bridge_status")
+        bridgeStatus["mqtt_connected"] = self._mqttClient._connected
+        bridgeStatus["binding_present"] = self.getModelBinding() is not None
+        bridgeStatus["compatibility_status"] = self.getBindingStatus()
+        bridgeStatus["topics"] = {
+            "command": f"{self.getMqttTopic()}/set",
+            "state": f"{self.getMqttTopic()}/state",
+        }
+        return deepcopy(bridgeStatus)
+
+    def getModelSummary(self) -> Dict[str, Any]:
+        binding = self.getModelBinding()
+        inputCount = self.getModelConfig("input_count", len(self._getBindingSourceIds(binding)) or 1)
+        return {
+            "id": self.getName().lower(),
+            "name": self.getName(),
+            "mqtt_topic": self.getMqttTopic(),
+            "input_count": inputCount,
+            "labels": sorted(set(self.getLabels())),
+            "binding": binding,
+            "compatibility_status": self.getBindingStatus(),
+        }
+
+    def getModelDetail(self) -> Dict[str, Any]:
+        summary = self.getModelSummary()
+        summary.update({
+            "learning_type": self.getLearningType(),
+            "observation_count": self.getObservationCount(),
+            "bridge_status": self.getBridgeStatus(),
+        })
+        return summary
     
     def setModelConfig(self, key, value):
         current = self._modelstore.getDict("config")
