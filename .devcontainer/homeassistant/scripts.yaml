@@ -1,0 +1,65 @@
+ml2mqtt_test_preset_kitchen:
+  alias: ML2MQTT Test Preset Kitchen
+  sequence:
+    - service: input_number.set_value
+      target:
+        entity_id: input_number.ml2mqtt_test_temperature
+      data:
+        value: 24
+    - service: input_number.set_value
+      target:
+        entity_id: input_number.ml2mqtt_test_humidity
+      data:
+        value: 55
+    - service: input_number.set_value
+      target:
+        entity_id: input_number.ml2mqtt_test_illuminance
+      data:
+        value: 700
+    - service: input_boolean.turn_on
+      target:
+        entity_id: input_boolean.ml2mqtt_test_motion
+
+ml2mqtt_test_preset_living_room:
+  alias: ML2MQTT Test Preset Living Room
+  sequence:
+    - service: input_number.set_value
+      target:
+        entity_id: input_number.ml2mqtt_test_temperature
+      data:
+        value: 21
+    - service: input_number.set_value
+      target:
+        entity_id: input_number.ml2mqtt_test_humidity
+      data:
+        value: 42
+    - service: input_number.set_value
+      target:
+        entity_id: input_number.ml2mqtt_test_illuminance
+      data:
+        value: 260
+    - service: input_boolean.turn_on
+      target:
+        entity_id: input_boolean.ml2mqtt_test_motion
+
+ml2mqtt_test_preset_study:
+  alias: ML2MQTT Test Preset Study
+  sequence:
+    - service: input_number.set_value
+      target:
+        entity_id: input_number.ml2mqtt_test_temperature
+      data:
+        value: 19
+    - service: input_number.set_value
+      target:
+        entity_id: input_number.ml2mqtt_test_humidity
+      data:
+        value: 35
+    - service: input_number.set_value
+      target:
+        entity_id: input_number.ml2mqtt_test_illuminance
+      data:
+        value: 450
+    - service: input_boolean.turn_off
+      target:
+        entity_id: input_boolean.ml2mqtt_test_motion

@@ -1,0 +1,3 @@
+[tools]
+"npm:@fission-ai/openspec" = "latest"
+"npm:opencode-ai" = "latest"

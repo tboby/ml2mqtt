@@ -99,11 +99,56 @@ class Ml2MqttCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return [source["entity_id"] for source in self.binding.get("sources", []) if source.get("entity_id")]
 
     @property
+    def source_details(self) -> list[dict[str, Any]]:
+        details: list[dict[str, Any]] = []
+        for source in self.binding.get("sources", []):
+            entity_id = source.get("entity_id")
+            if not entity_id:
+                continue
+
+            state = self.hass.states.get(entity_id)
+            name = source.get("name") or entity_id
+            if state is not None:
+                name = state.attributes.get("friendly_name") or name
+
+            current_state = state.state if state is not None else self.source_states.get(entity_id)
+            attributes = state.attributes if state is not None else {}
+
+            details.append({
+                "entity_id": entity_id,
+                "name": name,
+                "state": current_state,
+                "unit_of_measurement": attributes.get("unit_of_measurement"),
+                "icon": attributes.get("icon"),
+                "device_class": attributes.get("device_class"),
+                "original_domain": entity_id.split(".", 1)[0],
+            })
+        return details
+
+    def get_source_detail(self, entity_id: str) -> dict[str, Any] | None:
+        for detail in self.source_details:
+            if detail.get("entity_id") == entity_id:
+                return detail
+        return None
+
+    @property
+    def source_summary(self) -> str:
+        details = self.source_details
+        if not details:
+            return "No sensors bound"
+
+        summary = ", ".join(detail["name"] for detail in details)
+        if len(summary) <= 255:
+            return summary
+        return f"{len(details)} sensors bound"
+
+    @property
     def bridge_status(self) -> dict[str, Any]:
         status = deepcopy(self.data.get("bridge_status", {}) if self.data else {})
         status["runtime_status"] = self.runtime_status
         status["active_label"] = self.active_label
         status["source_entities"] = self.source_entities
+        status["sources"] = self.source_details
         return status
 
     @callback
@@ -175,7 +220,7 @@ class Ml2MqttCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             return
 
         payload = build_snapshot_payload(self.binding.get("sources", []), self.source_states, self.active_label)
-        mqtt.async_publish(self.hass, self.command_topic, json.dumps(payload), qos=0, retain=False)
+        await mqtt.async_publish(self.hass, self.command_topic, json.dumps(payload), qos=0, retain=False)
         self.runtime_status = "warning" if self.compatibility_status.get("state") == "warning" else "ready"
         self.async_update_listeners()
 

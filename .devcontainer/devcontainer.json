@@ -1,0 +1,45 @@
+{
+  "name": "ML2MQTT Home Assistant Dev",
+  "dockerComposeFile": "docker-compose.yml",
+  "service": "workspace",
+  "workspaceFolder": "/workspaces/ml2mqtt-hass",
+  "shutdownAction": "stopCompose",
+  "overrideCommand": false,
+  "remoteUser": "vscode",
+  "containerEnv": {
+    "UV_PROJECT_ENVIRONMENT": "/home/vscode/.local/share/ml2mqtt-venv"
+  },
+  "postCreateCommand": "bash .devcontainer/post-create.sh",
+  "postStartCommand": "bash .devcontainer/ensure-ml2mqtt-running.sh",
+  "forwardPorts": [5000, 8123],
+  "portsAttributes": {
+    "5000": {
+      "label": "ML2MQTT app",
+      "onAutoForward": "notify"
+    },
+    "8123": {
+      "label": "Home Assistant",
+      "onAutoForward": "openBrowserOnce"
+    }
+  },
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "redhat.vscode-yaml",
+        "ms-azuretools.vscode-docker"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/home/vscode/.local/share/ml2mqtt-venv/bin/python",
+        "python.analysis.extraPaths": [
+          "/workspaces/ml2mqtt-hass",
+          "/workspaces/ml2mqtt-hass/ml2mqtt"
+        ],
+        "python.testing.pytestEnabled": false,
+        "python.testing.unittestEnabled": true,
+        "files.trimTrailingWhitespace": true
+      }
+    }
+  }
+}

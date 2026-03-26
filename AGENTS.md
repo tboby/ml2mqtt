@@ -44,6 +44,11 @@ uv sync
 - Install/sync dependencies: `cd ml2mqtt && uv sync`
 - Run the app directly: `cd ml2mqtt && uv run python app.py`
 - Run the app with explicit config via env: `cd ml2mqtt && ML2MQTT_CONFIG_FILE=settings.json uv run python app.py`
+- Start the local Home Assistant devcontainer stack: open `.devcontainer/devcontainer.json` in a devcontainer-capable editor
+- The devcontainer auto-starts ML2MQTT via `.devcontainer/ensure-ml2mqtt-running.sh`; for manual startup use `bash .devcontainer/start-ml2mqtt.sh`
+- Home Assistant in the devcontainer workflow is exposed at `http://localhost:18123`; use `http://workspace:5000` inside Home Assistant for the ML2MQTT app URL
+- The default devcontainer ML2MQTT startup is stable single-process mode; use `ML2MQTT_DEBUG=true bash .devcontainer/start-ml2mqtt.sh` only when you explicitly want Flask debug reloads
+- The devcontainer workspace image preinstalls `uv` and the locked Python dependencies during image build; rebuild the devcontainer after changing `ml2mqtt/pyproject.toml` or `ml2mqtt/uv.lock`
 - Production-style local serve inside container: `docker compose up --build`
 - Validate compose config: `docker compose config`
 - Build the container manually: `docker build -t ml2mqtt .`
@@ -63,6 +68,7 @@ uv sync
 Use these exact commands as the first choices.
 
 - Dependency sync: `cd ml2mqtt && uv sync`
+- Devcontainer compose validation: `docker compose -f .devcontainer/docker-compose.yml config`
 - App smoke run: `cd ml2mqtt && uv run python app.py`
 - Docker build: `docker build -t ml2mqtt .`
 - Docker compose run: `docker compose up --build`

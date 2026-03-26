@@ -5,13 +5,13 @@ from typing import Any
 import voluptuous as vol
 
 from homeassistant import config_entries
-from homeassistant.data_entry_flow import FlowResult
+from homeassistant.data_entry_flow import FlowResult, section
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.selector import selector
 
 from .api import Ml2MqttApiClient, Ml2MqttApiError
 from .const import CONF_APP_URL, CONF_MODEL_ID, CONF_MODEL_SLUG, DEFAULT_APP_URL, DOMAIN
-from .helpers import build_helper_entity_metadata
+from .helpers import build_helper_entity_metadata, safe_slug
 
 
 class Ml2MqttConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
@@ -21,6 +21,49 @@ class Ml2MqttConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._app_url = DEFAULT_APP_URL
         self._api: Ml2MqttApiClient | None = None
         self._models: list[dict[str, Any]] = []
+        self._create_new_defaults: dict[str, Any] = {
+            "model_name": "",
+            "labels": "",
+            "source_entities": [],
+            "advanced": {},
+        }
+
+    def _default_mqtt_topic(self, model_name: str) -> str:
+        return f"ml2mqtt/{safe_slug(model_name)}"
+
+    def _parse_label_input(self, raw_labels: str) -> list[str]:
+        labels: list[str] = []
+        seen: set[str] = set()
+
+        for line in str(raw_labels).replace("\r", "\n").split("\n"):
+            for part in line.split(","):
+                label = part.strip()
+                if not label or label in seen:
+                    continue
+                labels.append(label)
+                seen.add(label)
+
+        return labels
+
+    def _build_create_new_schema(self) -> vol.Schema:
+        schema: dict[Any, Any] = {
+            vol.Required("model_name", default=self._create_new_defaults["model_name"]): str,
+            vol.Required("labels", default=self._create_new_defaults["labels"]): selector({"text": {"multiline": True}}),
+            vol.Required("source_entities", default=self._create_new_defaults["source_entities"]): selector({"entity": {"multiple": True}}),
+        }
+
+        if self.show_advanced_options:
+            advanced = self._create_new_defaults.get("advanced", {})
+            suggested_topic = str(advanced.get("mqtt_topic") or self._default_mqtt_topic(self._create_new_defaults["model_name"]))
+            schema[vol.Optional("advanced")] = section(
+                vol.Schema({
+                    vol.Optional("mqtt_topic", description={"suggested_value": suggested_topic}): str,
+                    vol.Optional("default_value", default=float(advanced.get("default_value", 9999))): vol.Coerce(float),
+                }),
+                {"collapsed": True},
+            )
+
+        return vol.Schema(schema)
 
     async def async_step_user(self, user_input: dict[str, Any] | None = None) -> FlowResult:
         errors = {}
@@ -105,16 +148,31 @@ class Ml2MqttConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         errors = {}
         if user_input is not None:
+            advanced = user_input.get("advanced") if isinstance(user_input.get("advanced"), dict) else {}
+            self._create_new_defaults = {
+                "model_name": str(user_input["model_name"]).strip(),
+                "labels": str(user_input["labels"]),
+                "source_entities": user_input["source_entities"],
+                "advanced": {
+                    "mqtt_topic": str(advanced.get("mqtt_topic", "")).strip(),
+                    "default_value": advanced.get("default_value", 9999),
+                },
+            }
+
+            labels = self._parse_label_input(self._create_new_defaults["labels"])
+            if len(labels) < 2:
+                errors["labels"] = "invalid_labels"
+
+        if user_input is not None and not errors:
             try:
-                labels = [label.strip() for label in user_input["labels"].split(",") if label.strip()]
                 model = await self._api.async_create_model(
                     {
-                        "model_name": user_input["model_name"],
+                        "model_name": self._create_new_defaults["model_name"],
                         "labels": labels,
-                        "mqtt_topic": user_input.get("mqtt_topic") or None,
-                        "default_value": user_input.get("default_value", 9999),
-                        "source_entities": user_input["source_entities"],
-                        "binding": build_helper_entity_metadata(user_input["model_name"]),
+                        "mqtt_topic": self._create_new_defaults["advanced"].get("mqtt_topic") or None,
+                        "default_value": self._create_new_defaults["advanced"].get("default_value", 9999),
+                        "source_entities": self._create_new_defaults["source_entities"],
+                        "binding": build_helper_entity_metadata(self._create_new_defaults["model_name"]),
                     }
                 )
                 await self.async_set_unique_id(model["slug"])
@@ -132,12 +190,6 @@ class Ml2MqttConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
         return self.async_show_form(
             step_id="create_new",
-            data_schema=vol.Schema({
-                vol.Required("model_name"): str,
-                vol.Required("labels"): str,
-                vol.Optional("mqtt_topic"): str,
-                vol.Optional("default_value", default=9999): vol.Coerce(float),
-                vol.Required("source_entities"): selector({"entity": {"multiple": True}}),
-            }),
+            data_schema=self._build_create_new_schema(),
             errors=errors,
         )

@@ -1,0 +1,51 @@
+services:
+  workspace:
+    build:
+      context: ..
+      dockerfile: .devcontainer/Dockerfile
+    command: sleep infinity
+    init: true
+    depends_on:
+      - mosquitto
+    volumes:
+      - ..:/workspaces/ml2mqtt-hass
+    ports:
+      - "15000:5000"
+    networks:
+      - devcontainer
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  homeassistant:
+    image: ghcr.io/home-assistant/home-assistant:stable
+    entrypoint:
+      - /bin/sh
+      - /homeassistant-start.sh
+    depends_on:
+      - mosquitto
+    volumes:
+      - ./homeassistant-start.sh:/homeassistant-start.sh:ro
+      - ./homeassistant:/config
+      - ../custom_components/ml2mqtt:/config/custom_components/ml2mqtt
+    ports:
+      - "18123:8123"
+    environment:
+      TZ: UTC
+    networks:
+      - devcontainer
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  mosquitto:
+    image: eclipse-mosquitto:2
+    command: mosquitto -c /mosquitto/config/mosquitto.conf
+    ports:
+      - "1884:1883"
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+    networks:
+      - devcontainer
+
+networks:
+  devcontainer:
+    name: ml2mqtt_devcontainer

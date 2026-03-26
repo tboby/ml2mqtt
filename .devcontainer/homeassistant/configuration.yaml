@@ -1,0 +1,64 @@
+default_config:
+
+homeassistant:
+  name: ML2MQTT Dev
+  time_zone: UTC
+  unit_system: metric
+
+automation: !include automations.yaml
+script: !include scripts.yaml
+scene: !include scenes.yaml
+
+input_number:
+  ml2mqtt_test_temperature:
+    name: ML2MQTT Test Temperature
+    min: 16
+    max: 30
+    step: 0.5
+    mode: slider
+    initial: 21
+  ml2mqtt_test_humidity:
+    name: ML2MQTT Test Humidity
+    min: 20
+    max: 80
+    step: 1
+    mode: slider
+    initial: 45
+  ml2mqtt_test_illuminance:
+    name: ML2MQTT Test Illuminance
+    min: 0
+    max: 1000
+    step: 25
+    mode: slider
+    initial: 300
+
+input_boolean:
+  ml2mqtt_test_motion:
+    name: ML2MQTT Test Motion
+    initial: false
+
+template:
+  - sensor:
+      - name: ML2MQTT Test Temperature Sensor
+        unique_id: ml2mqtt_test_temperature_sensor
+        state: "{{ states('input_number.ml2mqtt_test_temperature') }}"
+        unit_of_measurement: "C"
+        icon: mdi:thermometer
+      - name: ML2MQTT Test Humidity Sensor
+        unique_id: ml2mqtt_test_humidity_sensor
+        state: "{{ states('input_number.ml2mqtt_test_humidity') }}"
+        unit_of_measurement: "%"
+        icon: mdi:water-percent
+      - name: ML2MQTT Test Illuminance Sensor
+        unique_id: ml2mqtt_test_illuminance_sensor
+        state: "{{ states('input_number.ml2mqtt_test_illuminance') }}"
+        unit_of_measurement: "lx"
+        icon: mdi:brightness-6
+      - name: ML2MQTT Test Motion Score
+        unique_id: ml2mqtt_test_motion_score
+        state: "{{ 100 if is_state('input_boolean.ml2mqtt_test_motion', 'on') else 0 }}"
+        unit_of_measurement: "%"
+        icon: mdi:motion-sensor
+
+logger:
+  default: info

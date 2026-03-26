@@ -37,6 +37,40 @@ uv sync
 uv run python app.py
 ```
 
+### Local Home Assistant Devcontainer Workflow
+
+This repo now includes a local Home Assistant development stack under `.devcontainer/` for working on the custom integration and the ML2MQTT app together.
+
+What it starts for you:
+
+- `workspace`: Python 3.11 development container for editing, `uv`, and running the app, with the locked Python environment baked into the image.
+- `homeassistant`: an official Home Assistant container with `custom_components/ml2mqtt` mounted live from this repo.
+- `mosquitto`: a local MQTT broker already wired into Home Assistant and the app helper script, also exposed on `localhost:1884` for host-side testing without colliding with an existing local broker.
+
+Recommended flow:
+
+1. Open the repo in a devcontainer-capable editor and reopen in the container using `.devcontainer/devcontainer.json`.
+2. Wait for `.devcontainer/post-create.sh` to finish the local repo setup and for `.devcontainer/ensure-ml2mqtt-running.sh` to auto-start the app inside the workspace container.
+3. Open the ML2MQTT UI at `http://localhost:15000` and confirm it responds.
+4. Open `http://localhost:18123` and complete the normal Home Assistant onboarding flow.
+5. In Home Assistant, add the `MQTT` integration first and point it at broker `mosquitto` on port `1883`.
+6. Then add the `ML2MQTT` integration. It should default to `http://workspace:5000`; if not, enter that app URL manually.
+7. If you want to publish test messages from the host, connect your MQTT client to `localhost:1884`.
+8. For quick model testing, use the built-in helpers `sensor.ml2mqtt_test_temperature_sensor`, `sensor.ml2mqtt_test_humidity_sensor`, `sensor.ml2mqtt_test_illuminance_sensor`, and `sensor.ml2mqtt_test_motion_score`, plus the preset scripts `script.ml2mqtt_test_preset_kitchen`, `script.ml2mqtt_test_preset_living_room`, and `script.ml2mqtt_test_preset_study`.
+9. On each model device page, the bound inputs now appear as dedicated `Input ...` entities with their current values; use `Ingested Sensors` for the full list and `Capture Sample` when you want to record the current preset again without changing any source values.
+
+Notes:
+
+- The devcontainer auto-starts ML2MQTT in a stable single-process mode. If you want Flask debug reloads while editing, run `ML2MQTT_DEBUG=true bash .devcontainer/start-ml2mqtt.sh` manually in the workspace container.
+- The bundled MQTT broker allows anonymous local connections on `mosquitto:1883` inside Docker and `localhost:1884` from the host.
+- Current Home Assistant versions configure the MQTT broker through the UI, not `configuration.yaml`.
+- The `ML2MQTT` integration must connect to the app from inside the Home Assistant container, so use `http://workspace:5000` rather than the host URL `http://localhost:15000` or `http://127.0.0.1:5000`.
+- The devcontainer Home Assistant config also seeds a few test helpers and preset scripts so you can train a model without wiring up real devices first.
+- Re-running the same preset script does not change entity states, so use the model's `Capture Sample` button if you want to record another identical training example.
+- If you change `ml2mqtt/pyproject.toml` or `ml2mqtt/uv.lock`, rebuild the devcontainer so the workspace image refreshes the Python environment.
+- Home Assistant runtime files are stored under `.devcontainer/homeassistant/` and only the tracked config YAML files are kept in git.
+- If you want service logs from the host, run `docker compose -f .devcontainer/docker-compose.yml logs -f homeassistant`.
+
 ### Home Assistant-First Setup
 
 For Home Assistant users, the preferred path is now:
