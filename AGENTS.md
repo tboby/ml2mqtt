@@ -47,6 +47,7 @@ uv sync
 - Start the local Home Assistant devcontainer stack: open `.devcontainer/devcontainer.json` in a devcontainer-capable editor
 - The devcontainer auto-starts ML2MQTT via `.devcontainer/ensure-ml2mqtt-running.sh`; for manual startup use `bash .devcontainer/start-ml2mqtt.sh`
 - Home Assistant in the devcontainer workflow is exposed at `http://localhost:18123`; use `http://workspace:5000` inside Home Assistant for the ML2MQTT app URL
+- The Home Assistant integration now stores one shared app URL and manages multiple ML2MQTT models through the integration's `Configure` flow rather than separate entries per model
 - The default devcontainer ML2MQTT startup is stable single-process mode; use `ML2MQTT_DEBUG=true bash .devcontainer/start-ml2mqtt.sh` only when you explicitly want Flask debug reloads
 - The devcontainer workspace image preinstalls `uv` and the locked Python dependencies during image build; rebuild the devcontainer after changing `ml2mqtt/pyproject.toml` or `ml2mqtt/uv.lock`
 - Production-style local serve inside container: `docker compose up --build`

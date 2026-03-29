@@ -15,17 +15,21 @@ from .helpers import safe_slug
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
-    coordinator: Ml2MqttCoordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
-    entities: list[SensorEntity] = [
-        Ml2MqttPredictionSensor(coordinator, entry),
-        Ml2MqttConfidenceSensor(coordinator, entry),
-        Ml2MqttBridgeStatusSensor(coordinator, entry),
-        Ml2MqttIngestedSensorsSensor(coordinator, entry),
-    ]
-    entities.extend(
-        Ml2MqttBoundSourceSensor(coordinator, entry, source_entity_id)
-        for source_entity_id in coordinator.source_entities
-    )
+    coordinators: dict[str, Ml2MqttCoordinator] = hass.data[DOMAIN][entry.entry_id]["coordinators"]
+    entities: list[SensorEntity] = []
+
+    for coordinator in coordinators.values():
+        entities.extend([
+            Ml2MqttPredictionSensor(coordinator, entry),
+            Ml2MqttConfidenceSensor(coordinator, entry),
+            Ml2MqttBridgeStatusSensor(coordinator, entry),
+            Ml2MqttTrainingSamplesSensor(coordinator, entry),
+            Ml2MqttIngestedSensorsSensor(coordinator, entry),
+        ])
+        entities.extend(
+            Ml2MqttBoundSourceSensor(coordinator, entry, source_entity_id)
+            for source_entity_id in coordinator.source_entities
+        )
     async_add_entities(entities)
 
 
@@ -34,16 +38,18 @@ class Ml2MqttBaseEntity(CoordinatorEntity[Ml2MqttCoordinator]):
         super().__init__(coordinator)
         self._entry = entry
         self._key = key
-        self._attr_unique_id = f"{entry.entry_id}_{key}"
-        self._attr_name = f"{coordinator.data.get('name', entry.title)} {default_name}"
+        unique_prefix = coordinator.legacy_unique_prefix or f"{entry.entry_id}_{coordinator.model_slug}"
+        self._attr_unique_id = f"{unique_prefix}_{key}"
+        self._attr_name = f"{coordinator.model_name} {default_name}"
 
     @property
     def device_info(self) -> DeviceInfo:
         return DeviceInfo(
-            identifiers={(DOMAIN, self._entry.entry_id)},
+            identifiers={(DOMAIN, self.coordinator.device_identifier)},
             manufacturer=MANUFACTURER,
-            name=self.coordinator.data.get("name", self._entry.title),
+            name=self.coordinator.model_name,
             model="ML2MQTT Model Bridge",
+            configuration_url=self.coordinator.edit_url,
         )
 
 
@@ -62,6 +68,7 @@ class Ml2MqttPredictionSensor(Ml2MqttBaseEntity, SensorEntity):
         return {
             "model_id": self.coordinator.model_id,
             "compatibility_status": self.coordinator.compatibility_status,
+            "edit_url": self.coordinator.edit_url,
         }
 
 
@@ -81,6 +88,7 @@ class Ml2MqttBridgeStatusSensor(Ml2MqttBaseEntity, SensorEntity):
         super().__init__(coordinator, entry, "bridge_status", "Bridge Status")
         status = coordinator.binding.get("outputs", {}).get("status", {})
         self.entity_id = status.get("entity_id")
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC
 
     @property
     def native_value(self):
@@ -89,6 +97,28 @@ class Ml2MqttBridgeStatusSensor(Ml2MqttBaseEntity, SensorEntity):
     @property
     def extra_state_attributes(self):
         return self.coordinator.bridge_status
+
+
+class Ml2MqttTrainingSamplesSensor(Ml2MqttBaseEntity, SensorEntity):
+    def __init__(self, coordinator: Ml2MqttCoordinator, entry: ConfigEntry) -> None:
+        super().__init__(coordinator, entry, "training_samples", "Training Samples")
+        self._attr_unique_id = f"{entry.entry_id}_{coordinator.model_slug}_training_samples"
+        self.entity_id = f"sensor.ml2mqtt_{safe_slug(coordinator.model_name)}_training_samples"
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC
+        self._attr_icon = "mdi:database"
+
+    @property
+    def native_value(self):
+        return self.coordinator.observation_count
+
+    @property
+    def extra_state_attributes(self):
+        return {
+            "learning_type": self.coordinator.learning_type,
+            "model_type": self.coordinator.model_type,
+            "label_counts": self.coordinator.label_counts,
+            "edit_url": self.coordinator.edit_url,
+        }
 
 
 class Ml2MqttIngestedSensorsSensor(Ml2MqttBaseEntity, SensorEntity):
@@ -116,15 +146,16 @@ class Ml2MqttBoundSourceSensor(Ml2MqttBaseEntity, SensorEntity):
     def __init__(self, coordinator: Ml2MqttCoordinator, entry: ConfigEntry, source_entity_id: str) -> None:
         super().__init__(coordinator, entry, f"source_{safe_slug(source_entity_id)}", "Input")
         self._source_entity_id = source_entity_id
-        model_slug = safe_slug(coordinator.data.get("name", entry.title))
+        model_slug = safe_slug(coordinator.model_name)
         source_slug = safe_slug(source_entity_id)
         self.entity_id = f"sensor.ml2mqtt_{model_slug}_source_{source_slug}"
+        self._attr_entity_category = EntityCategory.DIAGNOSTIC
 
     @property
     def name(self) -> str:
         detail = self.coordinator.get_source_detail(self._source_entity_id)
         source_name = detail["name"] if detail is not None else self._source_entity_id
-        return f"{self.coordinator.data.get('name', self._entry.title)} Input {source_name}"
+        return f"{self.coordinator.model_name} Input {source_name}"
 
     def _detail(self):
         return self.coordinator.get_source_detail(self._source_entity_id)

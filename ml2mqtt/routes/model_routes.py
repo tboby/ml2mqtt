@@ -51,6 +51,18 @@ def _coerce_int(value: Any, default: Optional[int] = None) -> Optional[int]:
     raise ValueError("Expected an integer value")
 
 
+def _coerce_learning_type(value: Any) -> str:
+    normalized = str(value or "").strip().upper()
+    aliases = {
+        "OFF": "DISABLED",
+    }
+    normalized = aliases.get(normalized, normalized)
+    valid_values = {"DISABLED", "LAZY", "EAGER"}
+    if normalized not in valid_values:
+        raise ValueError("learning_type must be one of DISABLED, LAZY, or EAGER")
+    return normalized
+
+
 def _default_binding_entities(model_name: str) -> Dict[str, Any]:
     safe_slug = slugify(model_name or "model").replace("-", "_")
     prefix = f"ml2mqtt_{safe_slug}"
@@ -284,6 +296,24 @@ def init_model_routes(model_manager: ModelManager):
         model = model_manager.getModel(modelName)
         return jsonify(model.getBridgeStatus())
 
+    @model_bp.route(f"/api/v{API_VERSION}/models/<string:modelName>/learning-type", methods=["PUT"])
+    def apiSetModelLearningType(modelName: str) -> Response:
+        if not model_manager.modelExists(modelName):
+            return jsonify({"error": f"Model '{modelName}' not found"}), 404
+
+        data = request.get_json()
+        if not isinstance(data, dict):
+            return jsonify({"error": "Missing or invalid JSON payload"}), 400
+
+        try:
+            learningType = _coerce_learning_type(data.get("learning_type"))
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
+
+        model = model_manager.getModel(modelName)
+        model.setLearningType(learningType)
+        return jsonify(_serialize_model(modelName, model, include_bridge=True))
+
     @model_bp.route("/delete-model/<string:modelName>/", methods=["POST"])
     def deleteModel(modelName: str) -> Response:
         model_manager.removeModel(modelName)
@@ -383,7 +413,10 @@ def init_model_routes(model_manager: ModelManager):
     
     @model_bp.route("/model/<modelName>/changeLearning", methods=["POST"])
     def changeLearning(modelName):
-        learningType = request.form.get("learningType") # 'DISABLED', 'LAZY', 'EAGER'
+        try:
+            learningType = _coerce_learning_type(request.form.get("learningType")) # 'DISABLED', 'LAZY', 'EAGER'
+        except ValueError as e:
+            return jsonify(success=False, error=str(e)), 400
         logger.info(f"Changing learning type for model '{modelName}' to {learningType}")
         model_manager.getModel(modelName).setLearningType(learningType)
 

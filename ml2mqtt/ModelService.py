@@ -1,6 +1,7 @@
 import logging
 import json
 import time
+from collections import Counter
 from copy import deepcopy
 from typing import Any, Dict, List, Optional, Union
 
@@ -221,6 +222,11 @@ class ModelService:
     def getObservationCount(self) -> int:
         return self._modelstore.getObservationCount()
 
+    def getObservationCountsByLabel(self) -> Dict[str, int]:
+        counts = Counter(observation.label for observation in self.getObservations())
+        labels = sorted(set(self.getLabels()) | set(counts.keys()))
+        return {label: int(counts.get(label, 0)) for label in labels}
+
     def getLabels(self) -> List[str]:
         return self._modelstore.getLabels() + self.getModelConfig("labels", [])
 
@@ -382,6 +388,10 @@ class ModelService:
         learningType = settings.get("learning_type", "DISABLED")
         self._logger.info(f"Getting learning type: {learningType}")
         return learningType
+
+    def getModelType(self) -> str:
+        settings = self.getModelSettings() or {}
+        return str(settings.get("model_type", "RandomForest"))
     
     def setLearningType(self, learningType: str) -> None:
         settings = self.getModelSettings() or {}
@@ -594,7 +604,9 @@ class ModelService:
         summary = self.getModelSummary()
         summary.update({
             "learning_type": self.getLearningType(),
+            "model_type": self.getModelType(),
             "observation_count": self.getObservationCount(),
+            "label_counts": self.getObservationCountsByLabel(),
             "bridge_status": self.getBridgeStatus(),
         })
         return summary

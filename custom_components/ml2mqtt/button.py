@@ -13,16 +13,17 @@ from .helpers import safe_slug
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
-    coordinator: Ml2MqttCoordinator = hass.data[DOMAIN][entry.entry_id]["coordinator"]
-    async_add_entities([Ml2MqttCaptureSampleButton(coordinator, entry)])
+    coordinators: dict[str, Ml2MqttCoordinator] = hass.data[DOMAIN][entry.entry_id]["coordinators"]
+    async_add_entities([Ml2MqttCaptureSampleButton(coordinator, entry) for coordinator in coordinators.values()])
 
 
 class Ml2MqttCaptureSampleButton(CoordinatorEntity[Ml2MqttCoordinator], ButtonEntity):
     def __init__(self, coordinator: Ml2MqttCoordinator, entry: ConfigEntry) -> None:
         super().__init__(coordinator)
         self._entry = entry
-        self._attr_unique_id = f"{entry.entry_id}_capture_sample"
-        model_name = coordinator.data.get("name", entry.title)
+        unique_prefix = coordinator.legacy_unique_prefix or f"{entry.entry_id}_{coordinator.model_slug}"
+        self._attr_unique_id = f"{unique_prefix}_capture_sample"
+        model_name = coordinator.model_name
         self._attr_name = f"{model_name} Capture Sample"
         self.entity_id = f"button.ml2mqtt_{safe_slug(model_name)}_capture_sample"
         self._attr_icon = "mdi:camera-plus"
@@ -30,10 +31,11 @@ class Ml2MqttCaptureSampleButton(CoordinatorEntity[Ml2MqttCoordinator], ButtonEn
     @property
     def device_info(self) -> DeviceInfo:
         return DeviceInfo(
-            identifiers={(DOMAIN, self._entry.entry_id)},
+            identifiers={(DOMAIN, self.coordinator.device_identifier)},
             manufacturer=MANUFACTURER,
-            name=self.coordinator.data.get("name", self._entry.title),
+            name=self.coordinator.model_name,
             model="ML2MQTT Model Bridge",
+            configuration_url=self.coordinator.edit_url,
         )
 
     async def async_press(self) -> None:

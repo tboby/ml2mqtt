@@ -3,7 +3,7 @@
     "step": {
       "user": {
         "title": "Connect to ML2MQTT",
-        "description": "Enter the reachable ML2MQTT app URL for model discovery and binding.",
+        "description": "Enter the reachable ML2MQTT app URL. You only need to configure this once, then add or manage models from the integration options.",
         "data": {
           "app_url": "ML2MQTT app URL"
         },
@@ -12,8 +12,8 @@
         }
       },
       "mode": {
-        "title": "Model setup",
-        "description": "Choose whether to bind an existing model or create a new one from selected Home Assistant entities.",
+        "title": "Initial model setup",
+        "description": "Choose whether to bind one existing model or create the first model under this ML2MQTT integration.",
         "data": {
           "mode": "Setup mode"
         }
@@ -61,10 +61,104 @@
     },
     "error": {
       "cannot_connect": "Failed to connect to the ML2MQTT app API.",
-      "invalid_labels": "Add at least two possible predictions."
+      "invalid_labels": "Add at least two possible predictions.",
+      "model_not_found": "The selected model is no longer available."
     },
     "abort": {
-      "already_configured": "This ML2MQTT model is already configured."
+      "already_configured_service": "This ML2MQTT app URL is already configured. Use Configure on the existing integration to add more models.",
+      "no_available_models": "No available ML2MQTT models were found for this action."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Manage ML2MQTT models",
+        "description": "Add more models under this ML2MQTT integration, update the shared app URL, or remove models you no longer want in Home Assistant.",
+        "data": {
+          "action": "Task"
+        }
+      },
+      "update_url": {
+        "title": "Update ML2MQTT app URL",
+        "description": "Change the shared ML2MQTT app URL used by all models under this integration.",
+        "data": {
+          "app_url": "ML2MQTT app URL"
+        },
+        "data_description": {
+          "app_url": "Use `http://workspace:5000` in the devcontainer setup so Home Assistant can reach the app from inside Docker."
+        }
+      },
+      "add_existing": {
+        "title": "Add existing model",
+        "description": "Add another existing ML2MQTT model under this integration and bind Home Assistant source entities to it.",
+        "data": {
+          "model_id": "Model",
+          "source_entities": "Source entities"
+        },
+        "data_description": {
+          "model_id": "Pick an ML2MQTT model that is not already managed by this integration.",
+          "source_entities": "Select the Home Assistant entities whose states should be sent to the model when they change."
+        }
+      },
+      "create_new": {
+        "title": "Create and add model",
+        "description": "Create a new ML2MQTT model under this integration.",
+        "data": {
+          "model_name": "Model name",
+          "labels": "Possible predictions",
+          "source_entities": "Source entities"
+        },
+        "data_description": {
+          "model_name": "Used for the ML2MQTT model name, helper entities, and the default MQTT topic.",
+          "labels": "Enter one label per line or separate them with commas. These become the choices in the Trainer select.",
+          "source_entities": "Select the Home Assistant entities whose states should be used as the model inputs."
+        },
+        "sections": {
+          "advanced": {
+            "name": "Advanced options",
+            "description": "Optional overrides for the generated MQTT topic and the numeric replacement used when a source entity has no state.",
+            "data": {
+              "mqtt_topic": "MQTT topic override",
+              "default_value": "Missing-state replacement"
+            },
+            "data_description": {
+              "mqtt_topic": "Leave empty to let ML2MQTT generate `ml2mqtt/<model-name>` automatically.",
+              "default_value": "Used only when a selected entity reports `unknown`, `unavailable`, or no value."
+            }
+          }
+        }
+      },
+      "rebind_model": {
+        "title": "Update model inputs",
+        "description": "Change which Home Assistant entities are sent into one of the models managed by this integration.",
+        "data": {
+          "model_id": "Model",
+          "source_entities": "Source entities"
+        },
+        "data_description": {
+          "model_id": "Choose the managed ML2MQTT model you want to update.",
+          "source_entities": "Select the Home Assistant entities whose current states should be sent to the model."
+        }
+      },
+      "remove_model": {
+        "title": "Remove managed model",
+        "description": "Remove one model from this Home Assistant integration and clear its ML2MQTT binding.",
+        "data": {
+          "model_id": "Model"
+        },
+        "data_description": {
+          "model_id": "Choose the model to remove from this integration."
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Failed to connect to the ML2MQTT app API.",
+      "invalid_labels": "Add at least two possible predictions.",
+      "model_not_found": "The selected model is no longer available."
+    },
+    "abort": {
+      "no_available_models": "No available ML2MQTT models were found for this action.",
+      "no_configured_models": "This integration is not currently managing any ML2MQTT models."
     }
   }
 }

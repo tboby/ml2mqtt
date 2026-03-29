@@ -59,7 +59,7 @@ class ModelStore:
     def __init__(self, modelPath: str):
         self.modelPath = modelPath
         self.logger = logging.getLogger(__name__)
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
         self._db = sqlite3.connect(modelPath, check_same_thread=False)
         self._db.execute("PRAGMA journal_mode=WAL")
         self._cursor = self._db.cursor()
@@ -141,10 +141,10 @@ class ModelStore:
         else:
             return value
 
-    def _generateFormatString(self, size: int = -1) -> str:
+    def _generateFormatString(self, size: int = -1, entityKeys: Optional[List[EntityKey]] = None) -> str:
         formatStr = ""
         currentSize = 0
-        for entityKey in self._entityKeys:
+        for entityKey in (entityKeys or self._entityKeys):
             if 0 < size <= currentSize:
                 break
             formatStr += self.TYPE_FORMATS[entityKey.type]
@@ -198,21 +198,28 @@ class ModelStore:
             self.logger.exception("Exception while adding observation")
 
     def getObservations(self) -> List[ModelObservation]:
-        self._cursor.execute("SELECT time, label, data FROM Observations ORDER BY time DESC")
+        with self.lock:
+            cursor = self._db.cursor()
+            cursor.execute("SELECT time, label, data FROM Observations ORDER BY time DESC")
+            rows = cursor.fetchall()
+            entity_keys = list(self._entityKeys)
+
         observations: List[ModelObservation] = []
-        for timeVal, label, data in self._cursor.fetchall():
-            formatStr = self._generateFormatString(len(data))
+        for timeVal, label, data in rows:
+            formatStr = self._generateFormatString(len(data), entity_keys)
             unpacked = struct.unpack(formatStr, data)
             sensorValues = {
                 entity.name: self._getValue(entity, unpacked[i] if i < len(unpacked) else None)
-                for i, entity in enumerate(self._entityKeys)
+                for i, entity in enumerate(entity_keys)
             }
             sensorValues = {k: v for k, v in sensorValues.items() if v is not None}
             observations.append(ModelObservation(timeVal, label, sensorValues))
         return observations
 
     def getObservationCount(self) -> int:
-        row = self._cursor.execute("SELECT COUNT(*) FROM Observations").fetchone()
+        with self.lock:
+            cursor = self._db.cursor()
+            row = cursor.execute("SELECT COUNT(*) FROM Observations").fetchone()
         return int(row[0]) if row is not None else 0
 
     def getEntityKeys(self):
@@ -222,9 +229,9 @@ class ModelStore:
         return Path(self.modelPath).stat().st_size
 
     def _getSetting(self, name: str, default_value: Any) -> Any:
-        with self._db as conn:
-            row = conn.execute("SELECT value FROM Settings WHERE name = ?", (name,)).fetchone()
-            return row[0] if row else default_value
+        with self.lock:
+            row = self._db.execute("SELECT value FROM Settings WHERE name = ?", (name,)).fetchone()
+        return row[0] if row else default_value
 
     def getDict(self, name: str) -> Optional[Dict[str, Any]]:
         return json.loads(self._getSetting(name, "{}"))
@@ -250,7 +257,10 @@ class ModelStore:
         return self._getSetting("name", None)
 
     def getLabels(self) -> List[str]:
-        return [row[0] for row in self._cursor.execute("SELECT DISTINCT label FROM Observations ORDER BY label ASC")]
+        with self.lock:
+            cursor = self._db.cursor()
+            rows = cursor.execute("SELECT DISTINCT label FROM Observations ORDER BY label ASC").fetchall()
+        return [row[0] for row in rows]
 
     def deleteObservationsByLabel(self, label: str) -> None:
         with self.lock, self._db:
@@ -344,9 +354,11 @@ class ModelStore:
 
     def _getProcessors(self, processorType: ProcessorType) -> List[ProcessorEntry]:
         table = processorType.value
-        cursor = self._db.cursor()
-        cursor.execute(f"SELECT ROWID, type, params, order_num FROM {table} ORDER BY order_num ASC")
-        return [ProcessorEntry(id=row[0], type=row[1], params=json.loads(row[2]), order=row[3]) for row in cursor.fetchall()]
+        with self.lock:
+            cursor = self._db.cursor()
+            cursor.execute(f"SELECT ROWID, type, params, order_num FROM {table} ORDER BY order_num ASC")
+            rows = cursor.fetchall()
+        return [ProcessorEntry(id=row[0], type=row[1], params=json.loads(row[2]), order=row[3]) for row in rows]
 
     def close(self) -> None:
         try:
