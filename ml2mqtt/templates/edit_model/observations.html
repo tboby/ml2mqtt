@@ -1,6 +1,40 @@
 <h2>Manage Observations</h2>
 <h4 style="color: #7e8c9c; margin-top: -0.25rem; margin-bottom: 1.5rem;">Model: {{ model.name }}</h4>
 
+<div style="background-color: #18222d; border: 1px solid #2c3e50; border-radius: 8px; padding: 1rem; margin-bottom: 1.5rem;">
+  <div style="display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; margin-bottom: 0.75rem;">
+    <div>
+      <h3 style="margin: 0;">Raw Recording Tools</h3>
+      <p style="margin: 0.35rem 0 0; color: #8ea1b5;">Export, import, and replay snapshots from before preprocessors run.</p>
+    </div>
+    <div style="color: #8ea1b5; font-size: 0.95rem;">Stored raw recordings: <strong id="rawObservationCount">{{ model.rawObservationCount }}</strong></div>
+  </div>
+
+  <div style="display: flex; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 1rem;">
+    <button type="button" onclick="exportRawObservations()" style="background-color: #2d8cff; color: #fff; border: none; padding: 0.6rem 1rem; border-radius: 4px; cursor: pointer;">Export JSON</button>
+    <button type="button" onclick="replayRawObservations(false)" style="background-color: #2f9e44; color: #fff; border: none; padding: 0.6rem 1rem; border-radius: 4px; cursor: pointer;">Replay Imported Recordings</button>
+    <button type="button" onclick="replayRawObservations(true)" style="background-color: #c77d00; color: #fff; border: none; padding: 0.6rem 1rem; border-radius: 4px; cursor: pointer;">Replay And Reset Training Data</button>
+  </div>
+
+  <div style="display: grid; grid-template-columns: minmax(0, 1fr); gap: 0.75rem;">
+    <label for="rawObservationFile" style="font-weight: 600;">Import from file</label>
+    <input id="rawObservationFile" type="file" accept="application/json,.json" onchange="loadRawObservationFile(event)" style="background-color: #101820; color: #d9e2ec; border: 1px solid #2c3e50; border-radius: 4px; padding: 0.55rem;">
+
+    <label for="rawObservationPayload" style="font-weight: 600;">Raw recordings JSON</label>
+    <textarea id="rawObservationPayload" rows="12" spellcheck="false" style="width: 100%; background-color: #101820; color: #d9e2ec; border: 1px solid #2c3e50; border-radius: 4px; padding: 0.75rem; font-family: monospace;">[]</textarea>
+
+    <label style="display: inline-flex; align-items: center; gap: 0.5rem; color: #d9e2ec;">
+      <input id="replaceExistingRawObservations" type="checkbox">
+      Replace stored raw recordings before import
+    </label>
+
+    <div style="display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: center;">
+      <button type="button" onclick="importRawObservations()" style="background-color: #7b61ff; color: #fff; border: none; padding: 0.6rem 1rem; border-radius: 4px; cursor: pointer;">Import Recordings</button>
+      <span id="rawObservationStatus" style="color: #8ea1b5;"></span>
+    </div>
+  </div>
+</div>
+
 {% if model.observations %}
 <div style="display: flex; justify-content: flex-end; margin-bottom: 1rem; gap: 10px;">
   <button onclick="deleteObservations('{{ model.name }}', 'hour')" style="background-color: #ffa64d; color: #fff; border: none; padding: 0.5rem 1rem; border-radius: 4px; cursor: pointer;">Delete Last Hour</button>
@@ -75,6 +109,133 @@
 {% endif %}
 
 <script>
+  const rawObservationListUrl = "{{ url_for('model.apiListRawObservations', modelName=model.name) }}";
+  const rawObservationImportUrl = "{{ url_for('model.apiImportRawObservations', modelName=model.name) }}";
+  const rawObservationReplayUrl = "{{ url_for('model.apiReplayRawObservations', modelName=model.name) }}";
+
+  function setRawObservationStatus(message, isError = false) {
+    const status = document.getElementById('rawObservationStatus');
+    status.textContent = message;
+    status.style.color = isError ? '#ff8f8f' : '#8ea1b5';
+  }
+
+  function updateRawObservationCount(count) {
+    document.getElementById('rawObservationCount').textContent = String(count);
+  }
+
+  async function exportRawObservations() {
+    setRawObservationStatus('Exporting recordings...');
+    try {
+      const res = await fetch(rawObservationListUrl);
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to export recordings');
+      }
+
+      const payload = JSON.stringify(data.observations || [], null, 2);
+      document.getElementById('rawObservationPayload').value = payload;
+      updateRawObservationCount(data.count || 0);
+
+      const blob = new Blob([payload], { type: 'application/json' });
+      const blobUrl = URL.createObjectURL(blob);
+      const downloadLink = document.createElement('a');
+      downloadLink.href = blobUrl;
+      downloadLink.download = `{{ model.name }}-raw-observations.json`;
+      document.body.appendChild(downloadLink);
+      downloadLink.click();
+      downloadLink.remove();
+      URL.revokeObjectURL(blobUrl);
+      setRawObservationStatus(`Exported ${data.count || 0} recordings.`);
+    } catch (error) {
+      console.error(error);
+      setRawObservationStatus(error.message || 'Failed to export recordings', true);
+    }
+  }
+
+  async function importRawObservations() {
+    const payloadField = document.getElementById('rawObservationPayload');
+    const replaceExisting = document.getElementById('replaceExistingRawObservations').checked;
+
+    let observations;
+    try {
+      observations = JSON.parse(payloadField.value || '[]');
+    } catch (error) {
+      setRawObservationStatus('Raw recordings JSON is invalid.', true);
+      return;
+    }
+
+    if (!Array.isArray(observations)) {
+      setRawObservationStatus('Raw recordings JSON must be an array.', true);
+      return;
+    }
+
+    setRawObservationStatus('Importing recordings...');
+    try {
+      const res = await fetch(rawObservationImportUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          observations,
+          replace_existing: replaceExisting,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to import recordings');
+      }
+
+      updateRawObservationCount(data.raw_observation_count || 0);
+      setRawObservationStatus(`Imported ${data.imported || 0} recordings.`);
+    } catch (error) {
+      console.error(error);
+      setRawObservationStatus(error.message || 'Failed to import recordings', true);
+    }
+  }
+
+  async function replayRawObservations(clearTrainingData) {
+    const actionText = clearTrainingData ? 'Replaying recordings and resetting training data...' : 'Replaying recordings...';
+    setRawObservationStatus(actionText);
+
+    try {
+      const res = await fetch(rawObservationReplayUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          clear_training_data: clearTrainingData,
+          reset_processor_storage: true,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || 'Failed to replay recordings');
+      }
+
+      updateRawObservationCount(data.raw_observation_count || 0);
+      setRawObservationStatus(`Replayed ${data.replayed || 0} recordings. Training samples: ${data.observation_count || 0}.`);
+      window.setTimeout(() => window.location.reload(), 800);
+    } catch (error) {
+      console.error(error);
+      setRawObservationStatus(error.message || 'Failed to replay recordings', true);
+    }
+  }
+
+  async function loadRawObservationFile(event) {
+    const file = event.target.files && event.target.files[0];
+    if (!file) {
+      return;
+    }
+
+    try {
+      const text = await file.text();
+      const parsed = JSON.parse(text);
+      document.getElementById('rawObservationPayload').value = JSON.stringify(parsed, null, 2);
+      setRawObservationStatus(`Loaded ${file.name}.`);
+    } catch (error) {
+      console.error(error);
+      setRawObservationStatus('Failed to read the selected JSON file.', true);
+    }
+  }
+
   async function deleteObservations(modelName, scope) {
     const deleteObservationsUrl = "{{ url_for('model.apiDeleteObservations', modelName=model.name) }}";
 

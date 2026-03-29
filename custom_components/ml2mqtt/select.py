@@ -7,7 +7,7 @@ from homeassistant.helpers.entity import DeviceInfo, EntityCategory
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 
-from .const import DOMAIN, MANUFACTURER
+from .const import DISABLED_LABEL, DOMAIN, MANUFACTURER
 from .coordinator import Ml2MqttCoordinator
 from .helpers import safe_slug
 
@@ -17,6 +17,7 @@ LEARNING_MODE_LABELS = {
     "Eager": "EAGER",
 }
 LEARNING_MODE_VALUES = {value: label for label, value in LEARNING_MODE_LABELS.items()}
+TRAINER_OPTION_DISABLED = "No Label"
 
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback) -> None:
@@ -34,9 +35,17 @@ class Ml2MqttTrainerSelect(CoordinatorEntity[Ml2MqttCoordinator], SelectEntity):
         self._entry = entry
         unique_prefix = coordinator.legacy_unique_prefix or f"{entry.entry_id}_{coordinator.model_slug}"
         self._attr_unique_id = f"{unique_prefix}_trainer"
-        self._attr_name = f"{coordinator.model_name} Trainer"
+        self._attr_name = f"{coordinator.model_name} Current Label"
         trainer = coordinator.binding.get("trainer", {})
         self.entity_id = trainer.get("entity_id")
+        self._attr_icon = "mdi:tag"
+        self._attr_entity_category = EntityCategory.CONFIG
+
+    def _to_display_option(self, option: str) -> str:
+        return TRAINER_OPTION_DISABLED if option == DISABLED_LABEL else option
+
+    def _from_display_option(self, option: str) -> str:
+        return DISABLED_LABEL if option == TRAINER_OPTION_DISABLED else option
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -50,14 +59,18 @@ class Ml2MqttTrainerSelect(CoordinatorEntity[Ml2MqttCoordinator], SelectEntity):
 
     @property
     def options(self) -> list[str]:
-        return self.coordinator.label_options
+        return [self._to_display_option(option) for option in self.coordinator.label_options]
 
     @property
     def current_option(self) -> str:
-        return self.coordinator.active_label
+        return self._to_display_option(self.coordinator.active_label)
+
+    @property
+    def available(self) -> bool:
+        return super().available and self.coordinator.learning_type != "DISABLED"
 
     async def async_select_option(self, option: str) -> None:
-        await self.coordinator.async_set_trainer(option)
+        await self.coordinator.async_set_trainer(self._from_display_option(option))
 
 
 class Ml2MqttLearningModeSelect(CoordinatorEntity[Ml2MqttCoordinator], SelectEntity):

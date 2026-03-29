@@ -19,7 +19,7 @@ def build_helper_entity_metadata(model_name: str) -> dict[str, Any]:
     return {
         "trainer": {
             "entity_id": f"select.{prefix}_trainer",
-            "name": f"{model_name} Trainer",
+            "name": f"{model_name} Current Label",
         },
         "outputs": {
             "prediction": {

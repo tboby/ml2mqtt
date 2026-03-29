@@ -429,8 +429,10 @@ def init_model_routes(model_manager: ModelManager):
                 self.labels: List[str] = []
                 self.currentPage: int = 0
                 self.totalPages: int = 0
+                self.rawObservationCount: int = 0
 
         model = ViewModel()
+        model.rawObservationCount = model_manager.getModel(modelName).getRawObservationCount()
 
         if section == "observations":
             page = int(request.args.get("page", 1))

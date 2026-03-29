@@ -30,6 +30,6 @@ class NullHandler(BasePreprocessor):
     
     def configToString(self) -> str:
         if self.config['replacementType'] == 'float':
-            return "I will change values of None to " + self.config['nullReplacement']
+            return "I will change values of None to " + str(self.config['nullReplacement'])
         else:
-            return "I will change values of None to '" + self.config['nullReplacement'] + "'"
+            return "I will change values of None to '" + str(self.config['nullReplacement']) + "'"

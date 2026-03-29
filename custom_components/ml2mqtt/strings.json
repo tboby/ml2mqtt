@@ -40,7 +40,7 @@
         },
         "data_description": {
           "model_name": "Used for the ML2MQTT model name, helper entities, and the default MQTT topic.",
-          "labels": "Enter one label per line or separate them with commas. These become the choices in the Trainer select.",
+          "labels": "Enter one label per line or separate them with commas. These become the choices in the Current Label select.",
           "source_entities": "Select the Home Assistant entities whose states should be used as the model inputs."
         },
         "sections": {
@@ -110,7 +110,7 @@
         },
         "data_description": {
           "model_name": "Used for the ML2MQTT model name, helper entities, and the default MQTT topic.",
-          "labels": "Enter one label per line or separate them with commas. These become the choices in the Trainer select.",
+          "labels": "Enter one label per line or separate them with commas. These become the choices in the Current Label select.",
           "source_entities": "Select the Home Assistant entities whose states should be used as the model inputs."
         },
         "sections": {

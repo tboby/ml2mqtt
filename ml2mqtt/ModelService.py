@@ -117,6 +117,7 @@ class ModelService:
         persist_raw: bool = True,
     ) -> None:
         observationTime = assignedTime if assignedTime is not None else time.time()
+        learningType = self.getLearningType()
 
         self.updateBridgeStatus({
             "last_input_at": time.time(),
@@ -124,6 +125,10 @@ class ModelService:
             "last_error": None,
             "mqtt_connected": self._mqttClient._connected,
         })
+
+        if learningType == "DISABLED":
+            self._logger.info("Ignoring observation because learning is disabled")
+            return
 
         self._recordRecentMqttHistory(entityMap)
         if persist_raw:
@@ -147,7 +152,6 @@ class ModelService:
         entityValues = {k: v for k, v in processedEntityMap.items() if v is not None}
 
         if label != DISABLED_LABEL:
-            learningType = self.getLearningType()
             if learningType == "LAZY":
                 prediction, confidence = self._model.predictLabel(entityValues)
                 if prediction != label or confidence < 0.8:
