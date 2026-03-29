@@ -58,7 +58,7 @@ Recommended flow:
 7. If you want to publish test messages from the host, connect your MQTT client to `localhost:1884`.
 8. For quick model testing, use the built-in helpers `sensor.ml2mqtt_test_temperature_sensor`, `sensor.ml2mqtt_test_humidity_sensor`, `sensor.ml2mqtt_test_illuminance_sensor`, and `sensor.ml2mqtt_test_motion_score`, plus the preset scripts `script.ml2mqtt_test_preset_kitchen`, `script.ml2mqtt_test_preset_living_room`, and `script.ml2mqtt_test_preset_study`.
 9. Use `Configure` on that integration whenever you want to add another ML2MQTT model instead of creating a whole new integration entry.
-10. On each model device page, the bound inputs now appear as dedicated `Input ...` entities with their current values; `Learning Mode` lets you switch between Off/Lazy/Eager, `Training Samples` shows model type and per-label counts, and the device also exposes a direct edit-page link plus `Capture Sample` when you want to record the current preset again without changing any source values.
+10. On each model device page, `Ingested Sensors` shows the bound entities and their current values without creating duplicate mirror sensors; `Learning Mode` lets you switch between Off/Lazy/Eager, `Training Samples` shows model type and per-label counts, and the device also exposes a direct edit-page link plus `Capture Sample` when you want to record the current preset again without changing any source values.
 
 Notes:
 
@@ -67,6 +67,7 @@ Notes:
 - Current Home Assistant versions configure the MQTT broker through the UI, not `configuration.yaml`.
 - The `ML2MQTT` integration must connect to the app from inside the Home Assistant container, so use `http://workspace:5000` rather than the host URL `http://localhost:15000` or `http://127.0.0.1:5000`.
 - The integration now groups multiple ML2MQTT models under one shared app URL entry; old duplicate entries are merged automatically on reload.
+- Raw preprocessor-stage recordings can now be exported from `GET /api/v1/models/<model>/raw-observations`, imported with `POST /api/v1/models/<model>/raw-observations/import`, and replayed through the current pipeline with `POST /api/v1/models/<model>/raw-observations/replay`.
 - The devcontainer Home Assistant config also seeds a few test helpers and preset scripts so you can train a model without wiring up real devices first.
 - Re-running the same preset script does not change entity states, so use the model's `Capture Sample` button if you want to record another identical training example.
 - If you change `ml2mqtt/pyproject.toml` or `ml2mqtt/uv.lock`, rebuild the devcontainer so the workspace image refreshes the Python environment.

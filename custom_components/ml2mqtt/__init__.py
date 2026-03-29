@@ -74,6 +74,24 @@ def _cleanup_training_sample_entities(hass: HomeAssistant, entry: ConfigEntry, m
             entity_registry.async_update_entity(current_entity_id, new_entity_id=desired_entity_id)
 
 
+def _cleanup_source_mirror_entities(hass: HomeAssistant) -> None:
+    entity_registry = er.async_get(hass)
+    removed = 0
+
+    for entity_entry in list(entity_registry.entities.values()):
+        if entity_entry.platform != DOMAIN:
+            continue
+        if not entity_entry.entity_id.startswith("sensor."):
+            continue
+        if "_source_" not in entity_entry.entity_id and "_source_" not in entity_entry.unique_id:
+            continue
+        entity_registry.async_remove(entity_entry.entity_id)
+        removed += 1
+
+    if removed:
+        _LOGGER.info("Removed %s legacy ML2MQTT source mirror entities", removed)
+
+
 async def async_migrate_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     current_entry = hass.config_entries.async_get_entry(entry.entry_id)
     if current_entry is None:
@@ -149,6 +167,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     api = Ml2MqttApiClient(async_get_clientsession(hass), entry.data[CONF_APP_URL])
     model_references = get_configured_models(entry)
     _cleanup_training_sample_entities(hass, entry, model_references)
+    _cleanup_source_mirror_entities(hass)
     coordinators: dict[str, Ml2MqttCoordinator] = {}
 
     try:

@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from decimal import Decimal
-
 from homeassistant.components.sensor import SensorEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -26,10 +24,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry, async_add_e
             Ml2MqttTrainingSamplesSensor(coordinator, entry),
             Ml2MqttIngestedSensorsSensor(coordinator, entry),
         ])
-        entities.extend(
-            Ml2MqttBoundSourceSensor(coordinator, entry, source_entity_id)
-            for source_entity_id in coordinator.source_entities
-        )
     async_add_entities(entities)
 
 
@@ -117,6 +111,7 @@ class Ml2MqttTrainingSamplesSensor(Ml2MqttBaseEntity, SensorEntity):
             "learning_type": self.coordinator.learning_type,
             "model_type": self.coordinator.model_type,
             "label_counts": self.coordinator.label_counts,
+            "raw_observation_count": self.coordinator.raw_observation_count,
             "edit_url": self.coordinator.edit_url,
         }
 
@@ -138,79 +133,6 @@ class Ml2MqttIngestedSensorsSensor(Ml2MqttBaseEntity, SensorEntity):
         return {
             "source_count": len(details),
             "source_entities": [detail["entity_id"] for detail in details],
+            "source_values": {detail["entity_id"]: detail.get("state") for detail in details},
             "sources": details,
-        }
-
-
-class Ml2MqttBoundSourceSensor(Ml2MqttBaseEntity, SensorEntity):
-    def __init__(self, coordinator: Ml2MqttCoordinator, entry: ConfigEntry, source_entity_id: str) -> None:
-        super().__init__(coordinator, entry, f"source_{safe_slug(source_entity_id)}", "Input")
-        self._source_entity_id = source_entity_id
-        model_slug = safe_slug(coordinator.model_name)
-        source_slug = safe_slug(source_entity_id)
-        self.entity_id = f"sensor.ml2mqtt_{model_slug}_source_{source_slug}"
-        self._attr_entity_category = EntityCategory.DIAGNOSTIC
-
-    @property
-    def name(self) -> str:
-        detail = self.coordinator.get_source_detail(self._source_entity_id)
-        source_name = detail["name"] if detail is not None else self._source_entity_id
-        return f"{self.coordinator.model_name} Input {source_name}"
-
-    def _detail(self):
-        return self.coordinator.get_source_detail(self._source_entity_id)
-
-    def _native_source_value(self):
-        detail = self._detail()
-        if detail is None:
-            return None
-
-        value = detail.get("state")
-        if value in (None, "unknown", "unavailable"):
-            return None
-
-        unit = detail.get("unit_of_measurement")
-        if unit is None:
-            return value
-
-        if isinstance(value, (int, float, Decimal)):
-            return value
-
-        try:
-            if isinstance(value, str) and any(marker in value for marker in (".", "e", "E")):
-                return float(value)
-            return int(value)
-        except (TypeError, ValueError):
-            return None
-
-    @property
-    def native_value(self):
-        return self._native_source_value()
-
-    @property
-    def native_unit_of_measurement(self):
-        detail = self._detail()
-        value = self._native_source_value()
-        if detail is None or value is None:
-            return None
-        return detail.get("unit_of_measurement")
-
-    @property
-    def icon(self):
-        detail = self._detail()
-        if detail is None:
-            return "mdi:ray-start-arrow"
-        return detail.get("icon") or "mdi:ray-start-arrow"
-
-    @property
-    def extra_state_attributes(self):
-        detail = self._detail()
-        if detail is None:
-            return {"source_entity_id": self._source_entity_id}
-        return {
-            "source_entity_id": detail["entity_id"],
-            "source_name": detail["name"],
-            "original_domain": detail.get("original_domain"),
-            "device_class": detail.get("device_class"),
-            "raw_source_state": detail.get("state"),
         }

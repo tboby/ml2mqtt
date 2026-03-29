@@ -112,6 +112,12 @@ class Ml2MqttCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         return {str(label): int(count) for label, count in raw_counts.items()}
 
     @property
+    def raw_observation_count(self) -> int:
+        if not self.data:
+            return 0
+        return int(self.data.get("raw_observation_count", 0))
+
+    @property
     def label_options(self) -> list[str]:
         labels = self.data.get("labels", []) if self.data else []
         normalized = [label for label in labels if label and label != DISABLED_LABEL]
@@ -197,6 +203,7 @@ class Ml2MqttCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         status["learning_type"] = self.learning_type
         status["model_type"] = self.model_type
         status["observation_count"] = self.observation_count
+        status["raw_observation_count"] = self.raw_observation_count
         status["label_counts"] = self.label_counts
         status["edit_url"] = self.edit_url
         return status

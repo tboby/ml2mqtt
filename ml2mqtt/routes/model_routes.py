@@ -51,6 +51,20 @@ def _coerce_int(value: Any, default: Optional[int] = None) -> Optional[int]:
     raise ValueError("Expected an integer value")
 
 
+def _coerce_bool(value: Any, default: bool = False) -> bool:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            return True
+        if normalized in {"0", "false", "no", "off"}:
+            return False
+    return bool(value)
+
+
 def _coerce_learning_type(value: Any) -> str:
     normalized = str(value or "").strip().upper()
     aliases = {
@@ -124,6 +138,15 @@ def _serialize_model(model_name: str, model: Any, include_bridge: bool = False) 
     payload["slug"] = slugify(model_name)
     payload["name"] = model.getName() or model_name
     return payload
+
+
+def _serialize_observation(observation: ModelObservation) -> Dict[str, Any]:
+    return {
+        "time": observation.time,
+        "display_time": observation.display_time,
+        "label": observation.label,
+        "sensorValues": observation.sensorValues,
+    }
 
 def init_model_routes(model_manager: ModelManager):
     def createOrConfigureModel(
@@ -313,6 +336,77 @@ def init_model_routes(model_manager: ModelManager):
         model = model_manager.getModel(modelName)
         model.setLearningType(learningType)
         return jsonify(_serialize_model(modelName, model, include_bridge=True))
+
+    @model_bp.route(f"/api/v{API_VERSION}/models/<string:modelName>/raw-observations", methods=["GET"])
+    def apiListRawObservations(modelName: str) -> Response:
+        if not model_manager.modelExists(modelName):
+            return jsonify({"error": f"Model '{modelName}' not found"}), 404
+
+        model = model_manager.getModel(modelName)
+        observations = [_serialize_observation(observation) for observation in model.getRawObservations()]
+        return jsonify({
+            "observations": observations,
+            "count": len(observations),
+        })
+
+    @model_bp.route(f"/api/v{API_VERSION}/models/<string:modelName>/raw-observations/import", methods=["POST"])
+    def apiImportRawObservations(modelName: str) -> Response:
+        if not model_manager.modelExists(modelName):
+            return jsonify({"error": f"Model '{modelName}' not found"}), 404
+
+        data = request.get_json()
+        if not isinstance(data, dict):
+            return jsonify({"error": "Missing or invalid JSON payload"}), 400
+
+        observations = data.get("observations")
+        if not isinstance(observations, list):
+            return jsonify({"error": "observations must be a list"}), 400
+
+        model = model_manager.getModel(modelName)
+        try:
+            importedCount = model.importRawObservations(
+                observations,
+                replace_existing=_coerce_bool(data.get("replace_existing"), False),
+            )
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
+
+        return jsonify({
+            "imported": importedCount,
+            "raw_observation_count": model.getRawObservationCount(),
+        })
+
+    @model_bp.route(f"/api/v{API_VERSION}/models/<string:modelName>/raw-observations/replay", methods=["POST"])
+    def apiReplayRawObservations(modelName: str) -> Response:
+        if not model_manager.modelExists(modelName):
+            return jsonify({"error": f"Model '{modelName}' not found"}), 404
+
+        data = request.get_json(silent=True)
+        if data is None:
+            data = {}
+        if not isinstance(data, dict):
+            return jsonify({"error": "Missing or invalid JSON payload"}), 400
+
+        observations = data.get("observations")
+        if observations is not None and not isinstance(observations, list):
+            return jsonify({"error": "observations must be a list when provided"}), 400
+
+        model = model_manager.getModel(modelName)
+        try:
+            replayedCount = model.replayRawObservations(
+                observations=observations,
+                clear_training_data=_coerce_bool(data.get("clear_training_data"), False),
+                reset_processor_storage=_coerce_bool(data.get("reset_processor_storage"), True),
+            )
+        except ValueError as e:
+            return jsonify({"error": str(e)}), 400
+
+        return jsonify({
+            "replayed": replayedCount,
+            "observation_count": model.getObservationCount(),
+            "raw_observation_count": model.getRawObservationCount(),
+            "learning_type": model.getLearningType(),
+        })
 
     @model_bp.route("/delete-model/<string:modelName>/", methods=["POST"])
     def deleteModel(modelName: str) -> Response:

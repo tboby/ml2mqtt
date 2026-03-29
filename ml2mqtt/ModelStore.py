@@ -222,6 +222,43 @@ class ModelStore:
             row = cursor.execute("SELECT COUNT(*) FROM Observations").fetchone()
         return int(row[0]) if row is not None else 0
 
+    def addRawObservation(self, label: str, sensors: Dict[str, Any], assignedTime: Optional[float] = None) -> None:
+        if assignedTime is None:
+            assignedTime = time.time()
+
+        observations = self.getDict("raw_observations")
+        raw_list = observations.get("items", []) if isinstance(observations, dict) else []
+        raw_list.append({
+            "time": assignedTime,
+            "label": label,
+            "sensorValues": sensors,
+        })
+        self.saveDict("raw_observations", {"items": raw_list})
+
+    def getRawObservations(self) -> List[ModelObservation]:
+        observations: List[ModelObservation] = []
+        raw = self.getDict("raw_observations")
+        rows = raw.get("items", []) if isinstance(raw, dict) else []
+        for row in rows:
+            if not isinstance(row, dict):
+                continue
+            sensorValues = row.get("sensorValues", {})
+            if not isinstance(sensorValues, dict):
+                sensorValues = {}
+            observations.append(ModelObservation(
+                float(row.get("time", time.time())),
+                str(row.get("label") or "Disabled"),
+                {str(key): value for key, value in sensorValues.items()},
+            ))
+        observations.sort(key=lambda observation: observation.time)
+        return observations
+
+    def getRawObservationCount(self) -> int:
+        return len(self.getRawObservations())
+
+    def deleteRawObservations(self) -> None:
+        self.saveDict("raw_observations", {"items": []})
+
     def getEntityKeys(self):
         return self._entityKeys
 

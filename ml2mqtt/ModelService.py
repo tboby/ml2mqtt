@@ -99,6 +99,107 @@ class ModelService:
     def getAccuracy(self) -> Optional[float]:
         return self._model.getAccuracy()
 
+    def _recordRecentMqttHistory(self, entityMap: Dict[str, Any]) -> None:
+        previousEntityMap = self._modelstore.getDict("mqtt_observations")
+        if "history" in previousEntityMap:
+            previousEntityMap["history"].append(entityMap)
+            if len(previousEntityMap["history"]) > 10:
+                previousEntityMap["history"].pop(0)
+        else:
+            previousEntityMap["history"] = [entityMap]
+        self._modelstore.saveDict("mqtt_observations", previousEntityMap)
+
+    def _processRawObservation(
+        self,
+        label: str,
+        entityMap: Dict[str, Any],
+        assignedTime: Optional[float] = None,
+        persist_raw: bool = True,
+    ) -> None:
+        observationTime = assignedTime if assignedTime is not None else time.time()
+
+        self.updateBridgeStatus({
+            "last_input_at": time.time(),
+            "last_label": label,
+            "last_error": None,
+            "mqtt_connected": self._mqttClient._connected,
+        })
+
+        self._recordRecentMqttHistory(entityMap)
+        if persist_raw:
+            self._modelstore.addRawObservation(label, entityMap, observationTime)
+
+        processor_storage = self._modelstore.getDict("processor_storage")
+        processedEntityMap = dict(entityMap)
+        for preprocessor in self._preprocessors:
+            if not preprocessor.dbId in processor_storage:
+                processor_storage[preprocessor.dbId] = {}
+            processedEntityMap = preprocessor.process(processedEntityMap, processor_storage[preprocessor.dbId])
+            if not processedEntityMap:
+                self._logger.debug("No entity values to process.")
+                return
+        self._modelstore.saveDict("processor_storage", processor_storage)
+
+        if not processedEntityMap:
+            self._logger.debug("No entity values to process.")
+            return
+
+        entityValues = {k: v for k, v in processedEntityMap.items() if v is not None}
+
+        if label != DISABLED_LABEL:
+            learningType = self.getLearningType()
+            if learningType == "LAZY":
+                prediction, confidence = self._model.predictLabel(entityValues)
+                if prediction != label or confidence < 0.8:
+                    entityValues = self._modelstore.sortEntityValues(processedEntityMap, True)
+                    self._logger.info("Adding training observation for label: %s", label)
+                    self._modelstore.addObservation(label, entityValues, observationTime)
+                    self._populateModel()
+            elif learningType == "EAGER":
+                entityValues = self._modelstore.sortEntityValues(processedEntityMap, True)
+                self._logger.info("Adding training observation for label: %s", label)
+                self._modelstore.addObservation(label, entityValues, observationTime)
+                self._populateModel()
+
+        prediction, confidence = self._model.predictLabel(entityValues)
+        confidence = round(confidence, 4)
+        observation = entityValues
+        for postprocessor in self._postprocessors:
+            observation, prediction = postprocessor.process(observation, prediction, confidence)
+            if prediction is None:
+                return
+
+        topic = self.getMqttTopic()
+        self._mqttClient.publish(f"{topic}/state", json.dumps({"state": prediction, "confidence": confidence}))
+        self.updateBridgeStatus({
+            "last_prediction_at": time.time(),
+            "last_prediction": prediction,
+            "last_confidence": confidence,
+            "mqtt_connected": self._mqttClient._connected,
+        })
+        self._logger.info(f"Predicted label: {prediction} with confidence {confidence}")
+
+    def _normalizeRawObservation(self, observation: Dict[str, Any]) -> ModelObservation:
+        if not isinstance(observation, dict):
+            raise ValueError("Each observation must be a JSON object")
+
+        sensorValues = observation.get("sensorValues", observation.get("sensor_values", observation.get("sensors")))
+        if not isinstance(sensorValues, dict) or not sensorValues:
+            raise ValueError("Each observation must include a non-empty sensorValues object")
+
+        rawTime = observation.get("time", observation.get("timestamp"))
+        if rawTime in (None, ""):
+            observedAt = time.time()
+        else:
+            observedAt = float(rawTime)
+
+        label = str(observation.get("label") or DISABLED_LABEL)
+        normalizedValues = {str(key): value for key, value in sensorValues.items() if str(key).strip()}
+        if not normalizedValues:
+            raise ValueError("Each observation must include at least one sensor value")
+
+        return ModelObservation(observedAt, label, normalizedValues)
+
     def predictLabel(self, msg: Any) -> None:
         self._recentMqtt.append(msg)
         if len(self._recentMqtt) > 10:
@@ -134,72 +235,7 @@ class ModelService:
             elif "entity_id" in entity and "state" in entity:
                 entityMap[entity["entity_id"]] = entity["state"]
 
-        self.updateBridgeStatus({
-            "last_input_at": time.time(),
-            "last_label": label,
-            "last_error": None,
-            "mqtt_connected": self._mqttClient._connected,
-        })
-
-        previousEntityMap = self._modelstore.getDict("mqtt_observations")
-        if "history" in previousEntityMap:
-            previousEntityMap['history'].append(entityMap)
-            if len(previousEntityMap['history']) > 10:
-                previousEntityMap['history'].pop(0)
-        else:
-            previousEntityMap['history'] = [entityMap]    
-        self._modelstore.saveDict("mqtt_observations", previousEntityMap)
-
-        # Apply Preprocessors
-        processor_storage = self._modelstore.getDict("processor_storage")
-        for preprocessor in self._preprocessors:
-            if not preprocessor.dbId in processor_storage:
-                processor_storage[preprocessor.dbId] = {}
-            entityMap = preprocessor.process(entityMap, processor_storage[preprocessor.dbId])
-            if not entityMap:
-                self._logger.debug("No entity values to process.")
-                return
-        self._modelstore.saveDict("processor_storage", processor_storage)
-
-        if not entityMap:
-            self._logger.debug("No entity values to process.")
-            return        
-
-        entityValues = {k: v for k, v in entityMap.items() if v is not None}
-
-        if label != DISABLED_LABEL:
-            learningType = self.getLearningType()
-            if learningType == "LAZY":
-                prediction, confidence = self._model.predictLabel(entityValues)
-                if prediction != label or confidence < 0.8:
-                    entityValues = self._modelstore.sortEntityValues(entityMap, True)
-                    self._logger.info("Adding training observation for label: %s", label)
-                    self._modelstore.addObservation(label, entityValues)
-                    self._populateModel()
-            elif learningType == "EAGER":
-                entityValues = self._modelstore.sortEntityValues(entityMap, True)
-                self._logger.info("Adding training observation for label: %s", label)
-                self._modelstore.addObservation(label, entityValues)
-                self._populateModel()
-
-        prediction, confidence = self._model.predictLabel(entityValues)
-        confidence = round(confidence, 4)
-        # Apply postprocessors
-        observation = entityValues
-        for postprocessor in self._postprocessors:
-            observation, prediction = postprocessor.process(observation, prediction, confidence)
-            if prediction is None:
-                return
-
-        topic = self.getMqttTopic()
-        self._mqttClient.publish(f"{topic}/state", json.dumps({"state": prediction, "confidence": confidence}))
-        self.updateBridgeStatus({
-            "last_prediction_at": time.time(),
-            "last_prediction": prediction,
-            "last_confidence": confidence,
-            "mqtt_connected": self._mqttClient._connected,
-        })
-        self._logger.info(f"Predicted label: {prediction} with confidence {confidence}")
+        self._processRawObservation(label, entityMap)
 
     def getMqttTopic(self) -> str:
         return self._modelstore.getMqttTopic() or ""
@@ -221,6 +257,44 @@ class ModelService:
 
     def getObservationCount(self) -> int:
         return self._modelstore.getObservationCount()
+
+    def getRawObservations(self) -> List[ModelObservation]:
+        return self._modelstore.getRawObservations()
+
+    def getRawObservationCount(self) -> int:
+        return self._modelstore.getRawObservationCount()
+
+    def importRawObservations(self, observations: List[Dict[str, Any]], replace_existing: bool = False) -> int:
+        normalized = [self._normalizeRawObservation(observation) for observation in observations]
+
+        if replace_existing:
+            self._modelstore.deleteRawObservations()
+
+        for observation in normalized:
+            self._modelstore.addRawObservation(observation.label, observation.sensorValues, observation.time)
+        return len(normalized)
+
+    def replayRawObservations(
+        self,
+        observations: Optional[List[Dict[str, Any]]] = None,
+        clear_training_data: bool = False,
+        reset_processor_storage: bool = True,
+    ) -> int:
+        if observations is None:
+            normalized = self.getRawObservations()
+        else:
+            normalized = [self._normalizeRawObservation(observation) for observation in observations]
+
+        if clear_training_data:
+            self.deleteObservationsSince(0)
+
+        if reset_processor_storage:
+            self._modelstore.saveDict("processor_storage", {})
+
+        for observation in normalized:
+            self._processRawObservation(observation.label, observation.sensorValues, observation.time, persist_raw=False)
+
+        return len(normalized)
 
     def getObservationCountsByLabel(self) -> Dict[str, int]:
         counts = Counter(observation.label for observation in self.getObservations())
@@ -606,6 +680,7 @@ class ModelService:
             "learning_type": self.getLearningType(),
             "model_type": self.getModelType(),
             "observation_count": self.getObservationCount(),
+            "raw_observation_count": self.getRawObservationCount(),
             "label_counts": self.getObservationCountsByLabel(),
             "bridge_status": self.getBridgeStatus(),
         })
