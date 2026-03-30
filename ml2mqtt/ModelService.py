@@ -126,12 +126,13 @@ class ModelService:
             "mqtt_connected": self._mqttClient._connected,
         })
 
-        if learningType == "DISABLED":
-            self._logger.info("Ignoring observation because learning is disabled")
-            return
-
         self._recordRecentMqttHistory(entityMap)
-        if persist_raw:
+        if learningType == "DISABLED":
+            self._logger.info("Learning is disabled; skipping observation persistence")
+            if not persist_raw:
+                return
+
+        if persist_raw and learningType != "DISABLED":
             self._modelstore.addRawObservation(label, entityMap, observationTime)
 
         processor_storage = self._modelstore.getDict("processor_storage")

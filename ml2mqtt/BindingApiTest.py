@@ -87,6 +87,20 @@ class ModelBindingServiceTest(unittest.TestCase):
         self.assertEqual(bridge_status["compatibility_status"]["state"], "unbound")
         self.assertTrue(self.mqtt.published)
 
+    def test_replay_does_not_publish_when_learning_is_disabled(self):
+        self.model.replayRawObservations([
+            {
+                "label": "Kitchen",
+                "sensorValues": {
+                    "sensor.one": 12.5,
+                    "sensor.two": 3.1,
+                },
+            }
+        ])
+
+        self.assertEqual(self.model.getObservationCount(), 0)
+        self.assertFalse(self.mqtt.published)
+
 
 class AdapterApiRoutesTest(unittest.TestCase):
     @classmethod
