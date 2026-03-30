@@ -11,6 +11,7 @@ ML2MQTT can now run as a regular Docker container outside Home Assistant while k
 - Copy `ml2mqtt/settings.example.json` to `ml2mqtt/settings.json` if you want file-based config, or set `MQTT_SERVER`, `MQTT_PORT`, `MQTT_USERNAME`, and `MQTT_PASSWORD` as environment variables.
 - Persist model data by mounting a volume to `/data`.
 - Home Assistant ingress handling is disabled by default in standalone mode and still enabled automatically when the add-on's `/data/options.json` is present.
+- The standalone/root `Dockerfile` now uses Canonical's chiselled `ubuntu/python` runtime; the Home Assistant add-on image under `ml2mqtt/Dockerfile` stays on the existing base for broader architecture coverage.
 
 Run with Docker Compose:
 
