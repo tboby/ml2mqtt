@@ -349,6 +349,19 @@ def init_model_routes(model_manager: ModelManager):
             "count": len(observations),
         })
 
+    @model_bp.route(f"/api/v{API_VERSION}/models/<string:modelName>/raw-observations", methods=["DELETE"])
+    def apiDeleteRawObservations(modelName: str) -> Response:
+        if not model_manager.modelExists(modelName):
+            return jsonify({"error": f"Model '{modelName}' not found"}), 404
+
+        model = model_manager.getModel(modelName)
+        model.deleteRawObservations()
+        return jsonify({
+            "raw_observation_count": model.getRawObservationCount(),
+            "observation_count": model.getObservationCount(),
+            "learning_type": model.getLearningType(),
+        })
+
     @model_bp.route(f"/api/v{API_VERSION}/models/<string:modelName>/raw-observations/import", methods=["POST"])
     def apiImportRawObservations(modelName: str) -> Response:
         if not model_manager.modelExists(modelName):
@@ -368,12 +381,26 @@ def init_model_routes(model_manager: ModelManager):
                 observations,
                 replace_existing=_coerce_bool(data.get("replace_existing"), False),
             )
+
+            rebuiltCount = 0
+            if _coerce_bool(data.get("rebuild_after_import", data.get("replay_after_import")), False):
+                rebuiltCount = model.replayRawObservations(
+                    observations=None,
+                    clear_training_data=True,
+                    reset_processor_storage=True,
+                )
         except ValueError as e:
             return jsonify({"error": str(e)}), 400
+        except Exception as e:
+            logger.exception("Failed to import raw observations for model '%s'", modelName)
+            return jsonify({"error": str(e)}), 500
 
         return jsonify({
             "imported": importedCount,
+            "rebuilt": rebuiltCount,
+            "observation_count": model.getObservationCount(),
             "raw_observation_count": model.getRawObservationCount(),
+            "learning_type": model.getLearningType(),
         })
 
     @model_bp.route(f"/api/v{API_VERSION}/models/<string:modelName>/raw-observations/replay", methods=["POST"])
@@ -400,6 +427,9 @@ def init_model_routes(model_manager: ModelManager):
             )
         except ValueError as e:
             return jsonify({"error": str(e)}), 400
+        except Exception as e:
+            logger.exception("Failed to replay raw observations for model '%s'", modelName)
+            return jsonify({"error": str(e)}), 500
 
         return jsonify({
             "replayed": replayedCount,
@@ -430,14 +460,19 @@ def init_model_routes(model_manager: ModelManager):
                 self.currentPage: int = 0
                 self.totalPages: int = 0
                 self.rawObservationCount: int = 0
+                self.observationCount: int = 0
+                self.learningType: str = "DISABLED"
 
         model = ViewModel()
-        model.rawObservationCount = model_manager.getModel(modelName).getRawObservationCount()
+        modelService = model_manager.getModel(modelName)
+        model.rawObservationCount = modelService.getRawObservationCount()
+        model.observationCount = modelService.getObservationCount()
+        model.learningType = modelService.getLearningType()
 
         if section == "observations":
             page = int(request.args.get("page", 1))
             pageSize = 50
-            allObservations = model_manager.getModel(modelName).getObservations()
+            allObservations = modelService.getObservations()
             total = len(allObservations)
 
             start = (page - 1) * pageSize
@@ -446,7 +481,7 @@ def init_model_routes(model_manager: ModelManager):
 
             model.observations = paginated
             model.currentPage = page
-            model.labels = model_manager.getModel(modelName).getLabels()
+            model.labels = modelService.getLabels()
             model.totalPages = math.ceil(total / pageSize)
 
         elif section == "settings":

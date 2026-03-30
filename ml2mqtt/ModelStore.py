@@ -165,12 +165,13 @@ class ModelStore:
 
     def sortEntityValues(self, entityMap: Dict[str, Any], forTraining: bool) -> Dict[str, Any]:
         values: Dict[str, Any] = {}
-        remaining = set(entityMap.keys())
+        remaining = list(entityMap.keys())
         # Filter entity values based on known entity keys
         for entity in self._entityKeys:
             val = entityMap.get(entity.name)
             values[entity.name] = val
-            remaining.discard(entity.name)
+            if entity.name in remaining:
+                remaining.remove(entity.name)
 
         if forTraining:
             for key in remaining:
@@ -196,6 +197,21 @@ class ModelStore:
                 self._db.commit()
         except Exception as e:
             self.logger.exception("Exception while adding observation")
+            raise
+
+    def _rewriteObservations(self, observations: List[ModelObservation]) -> None:
+        ordered = sorted(observations, key=lambda observation: observation.time)
+
+        with self.lock, self._db:
+            self._db.execute("DELETE FROM Observations")
+            self._db.execute("DELETE FROM SensorKeys")
+            self._db.commit()
+
+        self._entityKeys = []
+        self._entityKeySet = set()
+
+        for observation in ordered:
+            self.addObservation(observation.label, observation.sensorValues, observation.time)
 
     def getObservations(self) -> List[ModelObservation]:
         with self.lock:
@@ -300,22 +316,19 @@ class ModelStore:
         return [row[0] for row in rows]
 
     def deleteObservationsByLabel(self, label: str) -> None:
-        with self.lock, self._db:
-            self._db.execute("DELETE FROM Observations WHERE label = ?", (label,))
-            self._db.commit()
+        remaining = [observation for observation in self.getObservations() if observation.label != label]
+        self._rewriteObservations(remaining)
 
     def deleteObservation(self, time: int) -> None:
-        with self.lock, self._db:
-            self._db.execute("DELETE FROM Observations WHERE time = ?", (time,))
-            self._db.commit()
+        remaining = [observation for observation in self.getObservations() if observation.time != time]
+        self._rewriteObservations(remaining)
 
     def deleteObservationsSince(self, timestamp: float) -> None:
         """
         Deletes all observations with a timestamp greater than or equal to the provided timestamp.
         """
-        with self.lock, self._db:
-            self._db.execute("DELETE FROM Observations WHERE time >= ?", (timestamp,))
-            self._db.commit()
+        remaining = [observation for observation in self.getObservations() if observation.time < timestamp]
+        self._rewriteObservations(remaining)
 
     def deleteEntity(self, entityName: str) -> None:
         if entityName not in self._entityKeySet:

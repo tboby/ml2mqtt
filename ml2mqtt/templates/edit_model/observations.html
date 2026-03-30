@@ -4,44 +4,45 @@
 <div style="background-color: #18222d; border: 1px solid #2c3e50; border-radius: 8px; padding: 1rem; margin-bottom: 1.5rem;">
   <div style="display: flex; justify-content: space-between; align-items: center; gap: 1rem; flex-wrap: wrap; margin-bottom: 0.75rem;">
     <div>
-      <h3 style="margin: 0;">Raw Recording Tools</h3>
-      <p style="margin: 0.35rem 0 0; color: #8ea1b5;">Export, import, and replay snapshots from before preprocessors run.</p>
+      <h3 style="margin: 0;">Raw Recording Dataset</h3>
+      <p style="margin: 0.35rem 0 0; color: #8ea1b5;">Stored raw recordings are the source of truth. Training observations below are rebuilt from them after preprocessors run.</p>
     </div>
-    <div style="color: #8ea1b5; font-size: 0.95rem;">Stored raw recordings: <strong id="rawObservationCount">{{ model.rawObservationCount }}</strong></div>
+    <div style="display: flex; gap: 1rem; flex-wrap: wrap; color: #8ea1b5; font-size: 0.95rem;">
+      <div>Stored raw recordings: <strong id="rawObservationCount">{{ model.rawObservationCount }}</strong></div>
+      <div>Derived training observations: <strong id="trainingObservationCount">{{ model.observationCount }}</strong></div>
+      <div>Learning mode: <strong id="rawObservationLearningType">{{ model.learningType }}</strong></div>
+    </div>
   </div>
 
   <div style="display: flex; gap: 0.75rem; flex-wrap: wrap; margin-bottom: 1rem;">
-    <button type="button" onclick="exportRawObservations()" style="background-color: #2d8cff; color: #fff; border: none; padding: 0.6rem 1rem; border-radius: 4px; cursor: pointer;">Export JSON</button>
-    <button type="button" onclick="replayRawObservations(false)" style="background-color: #2f9e44; color: #fff; border: none; padding: 0.6rem 1rem; border-radius: 4px; cursor: pointer;">Replay Imported Recordings</button>
-    <button type="button" onclick="replayRawObservations(true)" style="background-color: #c77d00; color: #fff; border: none; padding: 0.6rem 1rem; border-radius: 4px; cursor: pointer;">Replay And Reset Training Data</button>
+    <button type="button" onclick="exportRawObservations()" style="background-color: #2d8cff; color: #fff; border: none; padding: 0.6rem 1rem; border-radius: 4px; cursor: pointer;">Export Raw Dataset</button>
+    <button type="button" onclick="rebuildTrainingFromRawObservations()" style="background-color: #2f9e44; color: #fff; border: none; padding: 0.6rem 1rem; border-radius: 4px; cursor: pointer;">Rebuild Training From Raw</button>
   </div>
 
   <div style="display: grid; grid-template-columns: minmax(0, 1fr); gap: 0.75rem;">
-    <label for="rawObservationFile" style="font-weight: 600;">Import from file</label>
+    <div style="color: #8ea1b5;">Restore replaces the stored raw dataset and rebuilds training observations so preprocessors and training stay in sync.</div>
+
+    <label for="rawObservationFile" style="font-weight: 600;">Restore from file</label>
     <input id="rawObservationFile" type="file" accept="application/json,.json" onchange="loadRawObservationFile(event)" style="background-color: #101820; color: #d9e2ec; border: 1px solid #2c3e50; border-radius: 4px; padding: 0.55rem;">
 
-    <label for="rawObservationPayload" style="font-weight: 600;">Raw recordings JSON</label>
-    <textarea id="rawObservationPayload" rows="12" spellcheck="false" style="width: 100%; background-color: #101820; color: #d9e2ec; border: 1px solid #2c3e50; border-radius: 4px; padding: 0.75rem; font-family: monospace;">[]</textarea>
-
-    <label style="display: inline-flex; align-items: center; gap: 0.5rem; color: #d9e2ec;">
-      <input id="replaceExistingRawObservations" type="checkbox">
-      Replace stored raw recordings before import
-    </label>
-
     <div style="display: flex; gap: 0.75rem; flex-wrap: wrap; align-items: center;">
-      <button type="button" onclick="importRawObservations()" style="background-color: #7b61ff; color: #fff; border: none; padding: 0.6rem 1rem; border-radius: 4px; cursor: pointer;">Import Recordings</button>
+      <button type="button" onclick="restoreRawObservations()" style="background-color: #7b61ff; color: #fff; border: none; padding: 0.6rem 1rem; border-radius: 4px; cursor: pointer;">Restore Dataset</button>
       <span id="rawObservationStatus" style="color: #8ea1b5;"></span>
     </div>
+
+    <details style="margin-top: 0.5rem;">
+      <summary style="cursor: pointer; color: #8ea1b5;">Advanced JSON editor</summary>
+      <div style="display: grid; gap: 0.75rem; margin-top: 0.75rem;">
+        <label for="rawObservationPayload" style="font-weight: 600;">Raw recordings JSON</label>
+        <textarea id="rawObservationPayload" rows="12" spellcheck="false" style="width: 100%; background-color: #101820; color: #d9e2ec; border: 1px solid #2c3e50; border-radius: 4px; padding: 0.75rem; font-family: monospace;">[]</textarea>
+        <div style="color: #8ea1b5; font-size: 0.95rem;">Use this when you want to inspect or edit the exported dataset before restoring it.</div>
+      </div>
+    </details>
   </div>
 </div>
 
 {% if model.observations %}
-<div style="display: flex; justify-content: flex-end; margin-bottom: 1rem; gap: 10px;">
-  <button onclick="deleteObservations('{{ model.name }}', 'hour')" style="background-color: #ffa64d; color: #fff; border: none; padding: 0.5rem 1rem; border-radius: 4px; cursor: pointer;">Delete Last Hour</button>
-  <button onclick="deleteObservations('{{ model.name }}', 'day')" style="background-color: #ff704d; color: #fff; border: none; padding: 0.5rem 1rem; border-radius: 4px; cursor: pointer;">Delete Last Day</button>
-  <button onclick="deleteObservations('{{ model.name }}', 'week')" style="background-color: #cc4444; color: #fff; border: none; padding: 0.5rem 1rem; border-radius: 4px; cursor: pointer;">Delete Last Week</button>
-  <button onclick="deleteObservations('{{ model.name }}', 'all')" style="background-color: #e6b800; color: #fff; border: none; padding: 0.5rem 1rem; border-radius: 4px; cursor: pointer;">Delete All</button>
-</div>
+<p style="margin: 0 0 1rem; color: #8ea1b5;">Training observations are shown here for review only. Use raw recording tools above to export, import, or replay data.</p>
   <table style="width: 100%; border-collapse: collapse; margin-top: 1.5rem;">
     <thead>
       <tr style="background-color: #1f2d3a;">
@@ -52,12 +53,11 @@
         {% endfor %}
 
         <th style="padding: 0.75rem; min-width: 180px;">Label</th>
-        <th style="padding: 0.75rem; text-align: center;">Actions</th>
       </tr>
     </thead>
     <tbody>
       {% for obs in model.observations %}
-      <tr id="observationRow-{{ obs.time }}" style="border-bottom: 1px solid #2c3e50;">
+      <tr style="border-bottom: 1px solid #2c3e50;">
         <td style="padding: 0.75rem;" class="timestamp" data-utc="{{ obs.display_time }}"></td>
 
         {% for entityId in obs.sensorValues %}
@@ -80,13 +80,6 @@
               <option value="{{ label }}" {% if obs.label == label %}selected{% endif %}>{{ label }}</option>
             {% endfor %}
           </select>
-        </td>
-
-        <td style="text-align: center;">
-          <button onclick="deleteObservation('{{ model.name }}', '{{ obs.time }}')"
-                  style="background-color: transparent; border: none; color: #ff4d4d; cursor: pointer;">
-            Delete
-          </button>
         </td>
       </tr>
       {% endfor %}
@@ -123,6 +116,14 @@
     document.getElementById('rawObservationCount').textContent = String(count);
   }
 
+  function updateTrainingObservationCount(count) {
+    document.getElementById('trainingObservationCount').textContent = String(count);
+  }
+
+  function updateLearningType(learningType) {
+    document.getElementById('rawObservationLearningType').textContent = String(learningType || 'UNKNOWN');
+  }
+
   async function exportRawObservations() {
     setRawObservationStatus('Exporting recordings...');
     try {
@@ -152,9 +153,8 @@
     }
   }
 
-  async function importRawObservations() {
+  async function restoreRawObservations() {
     const payloadField = document.getElementById('rawObservationPayload');
-    const replaceExisting = document.getElementById('replaceExistingRawObservations').checked;
 
     let observations;
     try {
@@ -169,14 +169,15 @@
       return;
     }
 
-    setRawObservationStatus('Importing recordings...');
+    setRawObservationStatus('Restoring raw dataset and rebuilding training...');
     try {
       const res = await fetch(rawObservationImportUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           observations,
-          replace_existing: replaceExisting,
+          replace_existing: true,
+          rebuild_after_import: true,
         }),
       });
       const data = await res.json();
@@ -185,23 +186,30 @@
       }
 
       updateRawObservationCount(data.raw_observation_count || 0);
-      setRawObservationStatus(`Imported ${data.imported || 0} recordings.`);
+      updateTrainingObservationCount(data.observation_count || 0);
+      updateLearningType(data.learning_type || 'UNKNOWN');
+      const learningType = data.learning_type || 'UNKNOWN';
+      if (learningType === 'DISABLED') {
+        setRawObservationStatus(`Restored ${data.imported || 0} raw recordings, but learning mode is Off so no derived training observations were created.`, true);
+      } else {
+        setRawObservationStatus(`Restored ${data.imported || 0} raw recordings and rebuilt ${data.observation_count || 0} training observations.`);
+        window.setTimeout(() => window.location.reload(), 800);
+      }
     } catch (error) {
       console.error(error);
-      setRawObservationStatus(error.message || 'Failed to import recordings', true);
+      setRawObservationStatus(error.message || 'Failed to restore recordings', true);
     }
   }
 
-  async function replayRawObservations(clearTrainingData) {
-    const actionText = clearTrainingData ? 'Replaying recordings and resetting training data...' : 'Replaying recordings...';
-    setRawObservationStatus(actionText);
+  async function rebuildTrainingFromRawObservations() {
+    setRawObservationStatus('Rebuilding training observations from stored raw recordings...');
 
     try {
       const res = await fetch(rawObservationReplayUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          clear_training_data: clearTrainingData,
+          clear_training_data: true,
           reset_processor_storage: true,
         }),
       });
@@ -211,7 +219,9 @@
       }
 
       updateRawObservationCount(data.raw_observation_count || 0);
-      setRawObservationStatus(`Replayed ${data.replayed || 0} recordings. Training samples: ${data.observation_count || 0}.`);
+      updateTrainingObservationCount(data.observation_count || 0);
+      updateLearningType(data.learning_type || 'UNKNOWN');
+      setRawObservationStatus(`Rebuilt ${data.observation_count || 0} training observations from ${data.replayed || 0} stored raw recordings.`);
       window.setTimeout(() => window.location.reload(), 800);
     } catch (error) {
       console.error(error);
@@ -235,57 +245,6 @@
       setRawObservationStatus('Failed to read the selected JSON file.', true);
     }
   }
-
-  async function deleteObservations(modelName, scope) {
-    const deleteObservationsUrl = "{{ url_for('model.apiDeleteObservations', modelName=model.name) }}";
-
-    if (!confirm(`Are you sure you want to delete observations from the last ${scope}?`)) return;
-
-    try {
-      const res = await fetch(deleteObservationsUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ scope })
-      });
-
-      if (res.ok) {
-        location.reload();
-      } else {
-        const data = await res.json();
-        alert(data.error || "Failed to delete observations");
-      }
-    } catch (error) {
-      console.error("Fetch Error:", error);
-      alert(`An error occurred while deleting observations: ${error.message}`);
-    }
-  }
-  
-  async function deleteObservation(modelName, obsTime) {
-  if (!confirm("Are you sure you want to delete this observation?")) return;
-  const baseDeleteUrl = "{{ url_for('model.apiDeleteObservation', modelName='MODEL_NAME', observationTime=0.0) }}";
-  const deleteUrl = baseDeleteUrl.replace('/0.0/', `/${encodeURIComponent(obsTime)}/`).replace('/MODEL_NAME/', `/${encodeURIComponent(modelName)}/`);
-
-  try {
-    const res = await fetch(deleteUrl, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      }
-    });
-
-    if (res.ok) {
-      const row = document.getElementById(`observationRow-${obsTime}`);
-      if (row) {
-        row.remove();
-      }
-    } else {
-      const data = await res.json();
-      alert(data.error || "Failed to delete observation");
-    }
-  } catch (error) {
-    alert("An error occurred while deleting the observation");
-  }
-}
 
   // Convert all UTC timestamps to local browser time with 24hr format + seconds
   document.querySelectorAll('.timestamp').forEach(el => {

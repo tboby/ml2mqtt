@@ -268,6 +268,9 @@ class ModelService:
     def getRawObservationCount(self) -> int:
         return self._modelstore.getRawObservationCount()
 
+    def deleteRawObservations(self) -> None:
+        self._modelstore.deleteRawObservations()
+
     def importRawObservations(self, observations: List[Dict[str, Any]], replace_existing: bool = False) -> int:
         normalized = [self._normalizeRawObservation(observation) for observation in observations]
 
@@ -640,11 +643,7 @@ class ModelService:
                 "warnings": [],
                 "retraining_required": False,
             }
-        return deepcopy(binding.get("compatibility_status", {
-            "state": "ready",
-            "warnings": [],
-            "retraining_required": False,
-        }))
+        return deepcopy(self._buildCompatibilityStatus(binding, binding))
 
     def updateBridgeStatus(self, updates: Dict[str, Any]) -> Dict[str, Any]:
         current = self._modelstore.getDict("bridge_status")

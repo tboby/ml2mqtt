@@ -67,7 +67,7 @@ Notes:
 - Current Home Assistant versions configure the MQTT broker through the UI, not `configuration.yaml`.
 - The `ML2MQTT` integration must connect to the app from inside the Home Assistant container, so use `http://workspace:5000` rather than the host URL `http://localhost:15000` or `http://127.0.0.1:5000`.
 - The integration now groups multiple ML2MQTT models under one shared app URL entry; old duplicate entries are merged automatically on reload.
-- Raw preprocessor-stage recordings can now be exported from `GET /api/v1/models/<model>/raw-observations`, imported with `POST /api/v1/models/<model>/raw-observations/import`, and replayed through the current pipeline with `POST /api/v1/models/<model>/raw-observations/replay`.
+- Raw preprocessor-stage recordings are now treated as the editable source dataset: export them with `GET /api/v1/models/<model>/raw-observations`, import them with `POST /api/v1/models/<model>/raw-observations/import`, rebuild derived training observations with `POST /api/v1/models/<model>/raw-observations/replay`, or clear the stored raw dataset with `DELETE /api/v1/models/<model>/raw-observations`.
 - The devcontainer Home Assistant config also seeds a few test helpers and preset scripts so you can train a model without wiring up real devices first.
 - Re-running the same preset script does not change entity states, so use the model's `Capture Sample` button if you want to record another identical training example.
 - If you change `ml2mqtt/pyproject.toml` or `ml2mqtt/uv.lock`, rebuild the devcontainer so the workspace image refreshes the Python environment.
