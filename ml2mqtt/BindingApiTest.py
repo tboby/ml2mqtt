@@ -86,8 +86,51 @@ class ModelBindingServiceTest(unittest.TestCase):
         bridge_status = self.model.getBridgeStatus()
         self.assertEqual(bridge_status["compatibility_status"]["state"], "unbound")
         self.assertTrue(self.mqtt.published)
+        self.assertEqual(self.model.getRawObservationCount(), 0)
+        self.assertEqual(self.model.getObservationCount(), 0)
 
-    def test_replay_does_not_publish_when_learning_is_disabled(self):
+    def test_disabled_label_keeps_predictions_live_but_skips_learning_history(self):
+        self.model.setLearningType("EAGER")
+        self.model.addPreprocessor("rolling_average", {
+            "sensor": [{"SELECT_ALL": True}],
+            "windowSize": 2,
+        })
+
+        self.model.predictLabel(json.dumps([
+            {"label": "Kitchen"},
+            {"entity_id": "sensor.one", "state": 10.0},
+            {"entity_id": "sensor.two", "state": 2.0},
+        ]))
+        processor_storage = self.store.getDict("processor_storage")
+
+        self.mqtt.published.clear()
+        self.model.predictLabel(json.dumps([
+            {"label": "Disabled"},
+            {"entity_id": "sensor.one", "state": 99.0},
+            {"entity_id": "sensor.two", "state": 50.0},
+        ]))
+
+        self.assertTrue(self.mqtt.published)
+        self.assertEqual(self.model.getRawObservationCount(), 1)
+        self.assertEqual(self.model.getObservationCount(), 1)
+        self.assertEqual(self.store.getDict("processor_storage"), processor_storage)
+
+    def test_replay_does_not_publish_predictions(self):
+        self.model.setLearningType("EAGER")
+        self.model.replayRawObservations([
+            {
+                "label": "Kitchen",
+                "sensorValues": {
+                    "sensor.one": 12.5,
+                    "sensor.two": 3.1,
+                },
+            }
+        ])
+
+        self.assertEqual(self.model.getObservationCount(), 1)
+        self.assertFalse(self.mqtt.published)
+
+    def test_replay_does_not_rebuild_when_learning_is_disabled(self):
         self.model.replayRawObservations([
             {
                 "label": "Kitchen",

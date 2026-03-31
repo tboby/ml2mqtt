@@ -28,6 +28,7 @@ class ModelService:
 
         self._preprocessorFactory = PreprocessorFactory()
         self._preprocessors: List[BasePreprocessor] = []
+        self._runtimeProcessorStorage: Dict[str, Dict[str, Any]] = {}
         
         self._modelType: str
         self._allParams: Dict[str, Dict[str, Any]] = {}
@@ -88,6 +89,8 @@ class ModelService:
             except ValueError as e:
                 self._logger.warning(f"Failed to load preprocessor: {e}")
 
+        self._runtimeProcessorStorage = self._getStoredProcessorStorage()
+
 
     def getEntityKeys(self) -> List[EntityKey]:
         features = self._model.getFeatureImportance() or {}
@@ -109,66 +112,93 @@ class ModelService:
             previousEntityMap["history"] = [entityMap]
         self._modelstore.saveDict("mqtt_observations", previousEntityMap)
 
+    def _getStoredProcessorStorage(self) -> Dict[str, Dict[str, Any]]:
+        processorStorage = self._modelstore.getDict("processor_storage")
+        if isinstance(processorStorage, dict):
+            return deepcopy(processorStorage)
+        return {}
+
+    def _applyPreprocessors(
+        self,
+        entityMap: Dict[str, Any],
+        processorStorage: Dict[str, Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
+        processedEntityMap = dict(entityMap)
+        for preprocessor in self._preprocessors:
+            state = processorStorage.setdefault(str(preprocessor.dbId), {})
+            processedEntityMap = preprocessor.process(processedEntityMap, state)
+            if not processedEntityMap:
+                self._logger.debug("No entity values to process.")
+                return None
+        return processedEntityMap
+
     def _processRawObservation(
         self,
         label: str,
         entityMap: Dict[str, Any],
         assignedTime: Optional[float] = None,
         persist_raw: bool = True,
+        publish_prediction: bool = True,
     ) -> None:
         observationTime = assignedTime if assignedTime is not None else time.time()
         learningType = self.getLearningType()
+        shouldUpdateLearningHistory = learningType != "DISABLED" and label != DISABLED_LABEL
 
-        self.updateBridgeStatus({
-            "last_input_at": time.time(),
-            "last_label": label,
-            "last_error": None,
-            "mqtt_connected": self._mqttClient._connected,
-        })
+        if publish_prediction:
+            self.updateBridgeStatus({
+                "last_input_at": time.time(),
+                "last_label": label,
+                "last_error": None,
+                "mqtt_connected": self._mqttClient._connected,
+            })
+            self._recordRecentMqttHistory(entityMap)
 
-        self._recordRecentMqttHistory(entityMap)
-        if learningType == "DISABLED":
-            self._logger.info("Learning is disabled; skipping observation persistence")
-            if not persist_raw:
-                return
+        liveEntityValues: Optional[Dict[str, Any]] = None
+        if publish_prediction:
+            liveProcessedEntityMap = self._applyPreprocessors(entityMap, self._runtimeProcessorStorage)
+            if liveProcessedEntityMap:
+                liveEntityValues = {k: v for k, v in liveProcessedEntityMap.items() if v is not None}
 
-        if persist_raw and learningType != "DISABLED":
+        if persist_raw and shouldUpdateLearningHistory:
             self._modelstore.addRawObservation(label, entityMap, observationTime)
 
-        processor_storage = self._modelstore.getDict("processor_storage")
-        processedEntityMap = dict(entityMap)
-        for preprocessor in self._preprocessors:
-            if not preprocessor.dbId in processor_storage:
-                processor_storage[preprocessor.dbId] = {}
-            processedEntityMap = preprocessor.process(processedEntityMap, processor_storage[preprocessor.dbId])
-            if not processedEntityMap:
-                self._logger.debug("No entity values to process.")
-                return
-        self._modelstore.saveDict("processor_storage", processor_storage)
+        if shouldUpdateLearningHistory:
+            processorStorage = self._getStoredProcessorStorage()
+            processedEntityMap = self._applyPreprocessors(entityMap, processorStorage)
+            self._modelstore.saveDict("processor_storage", processorStorage)
 
-        if not processedEntityMap:
-            self._logger.debug("No entity values to process.")
-            return
+            if processedEntityMap:
+                entityValues = {k: v for k, v in processedEntityMap.items() if v is not None}
+            else:
+                entityValues = None
 
-        entityValues = {k: v for k, v in processedEntityMap.items() if v is not None}
-
-        if label != DISABLED_LABEL:
             if learningType == "LAZY":
-                prediction, confidence = self._model.predictLabel(entityValues)
-                if prediction != label or confidence < 0.8:
+                prediction, confidence = self._model.predictLabel(entityValues or {})
+                if processedEntityMap and (prediction != label or confidence < 0.8):
                     entityValues = self._modelstore.sortEntityValues(processedEntityMap, True)
                     self._logger.info("Adding training observation for label: %s", label)
                     self._modelstore.addObservation(label, entityValues, observationTime)
                     self._populateModel()
             elif learningType == "EAGER":
-                entityValues = self._modelstore.sortEntityValues(processedEntityMap, True)
-                self._logger.info("Adding training observation for label: %s", label)
-                self._modelstore.addObservation(label, entityValues, observationTime)
-                self._populateModel()
+                if processedEntityMap:
+                    entityValues = self._modelstore.sortEntityValues(processedEntityMap, True)
+                    self._logger.info("Adding training observation for label: %s", label)
+                    self._modelstore.addObservation(label, entityValues, observationTime)
+                    self._populateModel()
+        elif learningType == "DISABLED":
+            self._logger.info("Learning is disabled; skipping observation persistence")
+        else:
+            self._logger.info("Trainer label is disabled; ignoring observation for learning")
 
-        prediction, confidence = self._model.predictLabel(entityValues)
+        if not publish_prediction:
+            return
+
+        if not liveEntityValues:
+            return
+
+        prediction, confidence = self._model.predictLabel(liveEntityValues)
         confidence = round(confidence, 4)
-        observation = entityValues
+        observation = liveEntityValues
         for postprocessor in self._postprocessors:
             observation, prediction = postprocessor.process(observation, prediction, confidence)
             if prediction is None:
@@ -300,7 +330,13 @@ class ModelService:
             self._modelstore.saveDict("processor_storage", {})
 
         for observation in normalized:
-            self._processRawObservation(observation.label, observation.sensorValues, observation.time, persist_raw=False)
+            self._processRawObservation(
+                observation.label,
+                observation.sensorValues,
+                observation.time,
+                persist_raw=False,
+                publish_prediction=False,
+            )
 
         return len(normalized)
 
