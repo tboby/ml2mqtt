@@ -130,6 +130,39 @@ class ModelBindingServiceTest(unittest.TestCase):
         self.assertEqual(self.model.getObservationCount(), 1)
         self.assertFalse(self.mqtt.published)
 
+    def test_eager_replay_rebuilds_model_once_after_batch(self):
+        self.model.setLearningType("EAGER")
+
+        populate_count = 0
+        original_populate = self.model._populateModel
+
+        def counting_populate():
+            nonlocal populate_count
+            populate_count += 1
+            original_populate()
+
+        self.model._populateModel = counting_populate
+
+        self.model.replayRawObservations([
+            {
+                "label": "Kitchen",
+                "sensorValues": {
+                    "sensor.one": 12.5,
+                    "sensor.two": 3.1,
+                },
+            },
+            {
+                "label": "Office",
+                "sensorValues": {
+                    "sensor.one": 4.2,
+                    "sensor.two": 8.9,
+                },
+            },
+        ])
+
+        self.assertEqual(self.model.getObservationCount(), 2)
+        self.assertEqual(populate_count, 1)
+
     def test_replay_does_not_rebuild_when_learning_is_disabled(self):
         self.model.replayRawObservations([
             {

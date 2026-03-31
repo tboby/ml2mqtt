@@ -139,6 +139,7 @@ class ModelService:
         assignedTime: Optional[float] = None,
         persist_raw: bool = True,
         publish_prediction: bool = True,
+        rebuild_model: bool = True,
     ) -> None:
         observationTime = assignedTime if assignedTime is not None else time.time()
         learningType = self.getLearningType()
@@ -178,13 +179,15 @@ class ModelService:
                     entityValues = self._modelstore.sortEntityValues(processedEntityMap, True)
                     self._logger.info("Adding training observation for label: %s", label)
                     self._modelstore.addObservation(label, entityValues, observationTime)
-                    self._populateModel()
+                    if rebuild_model:
+                        self._populateModel()
             elif learningType == "EAGER":
                 if processedEntityMap:
                     entityValues = self._modelstore.sortEntityValues(processedEntityMap, True)
                     self._logger.info("Adding training observation for label: %s", label)
                     self._modelstore.addObservation(label, entityValues, observationTime)
-                    self._populateModel()
+                    if rebuild_model:
+                        self._populateModel()
         elif learningType == "DISABLED":
             self._logger.info("Learning is disabled; skipping observation persistence")
         else:
@@ -329,6 +332,9 @@ class ModelService:
         if reset_processor_storage:
             self._modelstore.saveDict("processor_storage", {})
 
+        learningType = self.getLearningType()
+        rebuild_during_replay = learningType != "EAGER"
+
         for observation in normalized:
             self._processRawObservation(
                 observation.label,
@@ -336,7 +342,11 @@ class ModelService:
                 observation.time,
                 persist_raw=False,
                 publish_prediction=False,
+                rebuild_model=rebuild_during_replay,
             )
+
+        if normalized and not rebuild_during_replay:
+            self._populateModel()
 
         return len(normalized)
 
