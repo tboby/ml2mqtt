@@ -6,12 +6,12 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryNotReady
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import device_registry as dr, entity_registry as er
 
 from .api import Ml2MqttApiClient, Ml2MqttApiError
 from .const import CONF_APP_URL, CONF_MODELS, CONF_MODEL_ID, CONF_MODEL_SLUG, DOMAIN, PLATFORMS
 from .coordinator import Ml2MqttCoordinator
-from .helpers import build_entry_title, get_configured_models, normalize_app_url, safe_slug
+from .helpers import build_device_identifier, build_entry_title, get_configured_models, normalize_app_url, safe_slug
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -72,6 +72,66 @@ def _cleanup_training_sample_entities(hass: HomeAssistant, entry: ConfigEntry, m
         current_entity_id = entity_registry.async_get_entity_id("sensor", DOMAIN, desired_unique_id)
         if current_entity_id and current_entity_id != desired_entity_id and entity_registry.async_get(desired_entity_id) is None:
             entity_registry.async_update_entity(current_entity_id, new_entity_id=desired_entity_id)
+
+
+def _expected_model_entity_keys(entry: ConfigEntry, model_references: list[dict[str, str]]) -> set[tuple[str, str]]:
+    expected_keys: set[tuple[str, str]] = set()
+
+    for model in model_references:
+        model_id = str(model.get(CONF_MODEL_ID) or "")
+        model_slug = str(model.get(CONF_MODEL_SLUG) or safe_slug(model_id))
+        unique_prefix = str(model.get("legacy_unique_prefix") or f"{entry.entry_id}_{model_slug}")
+
+        expected_keys.update({
+            ("sensor", f"{unique_prefix}_prediction"),
+            ("sensor", f"{unique_prefix}_confidence"),
+            ("sensor", f"{unique_prefix}_bridge_status"),
+            ("select", f"{unique_prefix}_trainer"),
+            ("button", f"{unique_prefix}_capture_sample"),
+            ("sensor", f"{unique_prefix}_ingested_sensors"),
+            ("select", f"{entry.entry_id}_{model_slug}_learning_mode"),
+            ("sensor", f"{entry.entry_id}_{model_slug}_training_samples"),
+        })
+
+    return expected_keys
+
+
+def _cleanup_removed_model_entities(hass: HomeAssistant, entry: ConfigEntry, model_references: list[dict[str, str]]) -> None:
+    entity_registry = er.async_get(hass)
+    expected_keys = _expected_model_entity_keys(entry, model_references)
+    removed = 0
+
+    for entity_entry in list(er.async_entries_for_config_entry(entity_registry, entry.entry_id)):
+        if entity_entry.platform != DOMAIN:
+            continue
+        if (entity_entry.domain, entity_entry.unique_id) in expected_keys:
+            continue
+        entity_registry.async_remove(entity_entry.entity_id)
+        removed += 1
+
+    if removed:
+        _LOGGER.info("Removed %s stale ML2MQTT entities", removed)
+
+
+def _cleanup_removed_model_devices(hass: HomeAssistant, entry: ConfigEntry, model_references: list[dict[str, str]]) -> None:
+    device_registry = dr.async_get(hass)
+    expected_identifiers = {
+        (DOMAIN, build_device_identifier(entry.entry_id, str(model.get(CONF_MODEL_SLUG) or safe_slug(str(model.get(CONF_MODEL_ID) or "model")))))
+        for model in model_references
+    }
+    removed = 0
+
+    for device_entry in list(dr.async_entries_for_config_entry(device_registry, entry.entry_id)):
+        domain_identifiers = {identifier for identifier in device_entry.identifiers if identifier[0] == DOMAIN}
+        if not domain_identifiers:
+            continue
+        if domain_identifiers & expected_identifiers:
+            continue
+        device_registry.async_remove_device(device_entry.id)
+        removed += 1
+
+    if removed:
+        _LOGGER.info("Removed %s stale ML2MQTT devices", removed)
 
 
 def _cleanup_source_mirror_entities(hass: HomeAssistant) -> None:
@@ -166,8 +226,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     entry = primary_entry
     api = Ml2MqttApiClient(async_get_clientsession(hass), entry.data[CONF_APP_URL])
     model_references = get_configured_models(entry)
+    _cleanup_removed_model_entities(hass, entry, model_references)
     _cleanup_training_sample_entities(hass, entry, model_references)
     _cleanup_source_mirror_entities(hass)
+    _cleanup_removed_model_devices(hass, entry, model_references)
     coordinators: dict[str, Ml2MqttCoordinator] = {}
 
     try:

@@ -690,7 +690,18 @@ class ModelService:
                 "warnings": [],
                 "retraining_required": False,
             }
-        return deepcopy(self._buildCompatibilityStatus(binding, binding))
+
+        learnedSources = [entity.name for entity in self._modelstore.getEntityKeys()]
+        if learnedSources:
+            return deepcopy(self._buildCompatibilityStatus(None, binding))
+
+        storedStatus = binding.get("compatibility_status")
+        if isinstance(storedStatus, dict):
+            status = deepcopy(storedStatus)
+            status["updated_at"] = time.time()
+            return status
+
+        return deepcopy(self._buildCompatibilityStatus(None, binding))
 
     def updateBridgeStatus(self, updates: Dict[str, Any]) -> Dict[str, Any]:
         current = self._modelstore.getDict("bridge_status")

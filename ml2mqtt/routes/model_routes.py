@@ -140,6 +140,11 @@ def _serialize_model(model_name: str, model: Any, include_bridge: bool = False) 
     return payload
 
 
+def _canonical_model_id(model: Any, fallback: str = "") -> str:
+    model_name = str(model.getName() or fallback or "").strip()
+    return model_name.lower()
+
+
 def _serialize_observation(observation: ModelObservation) -> Dict[str, Any]:
     return {
         "time": observation.time,
@@ -226,7 +231,7 @@ def init_model_routes(model_manager: ModelManager):
     def apiListModels() -> Response:
         models = []
         for modelName, model in model_manager.getModels().items():
-            models.append(_serialize_model(modelName, model, include_bridge=False))
+            models.append(_serialize_model(_canonical_model_id(model, modelName), model, include_bridge=False))
         return jsonify({"models": models, "version": API_VERSION})
 
     @model_bp.route(f"/api/v{API_VERSION}/models", methods=["POST"])
@@ -250,26 +255,43 @@ def init_model_routes(model_manager: ModelManager):
             inputCount = getInputCount(data.get("input_count"), sourceCount)
 
             model = createOrConfigureModel(modelName, mqttTopic, labels, inputCount, defaultValue, binding)
-            return jsonify(_serialize_model(modelName, model, include_bridge=True)), 201
+            return jsonify(_serialize_model(_canonical_model_id(model, modelName), model, include_bridge=True)), 201
         except ValueError as e:
             return jsonify({"error": str(e)}), 400
         except Exception as e:
             logger.exception("Error creating model from adapter API")
             return jsonify({"error": str(e)}), 500
 
+    @model_bp.route(f"/api/v{API_VERSION}/models/<string:modelName>", methods=["DELETE"])
+    def apiDeleteModel(modelName: str) -> Response:
+        if not model_manager.modelExists(modelName):
+            return jsonify({"error": f"Model '{modelName}' not found"}), 404
+
+        model = model_manager.getModel(modelName)
+        canonicalModelId = _canonical_model_id(model, modelName)
+        deletedName = model.getName() or modelName
+        model_manager.removeModel(modelName)
+        return jsonify({
+            "deleted": True,
+            "id": canonicalModelId,
+            "name": deletedName,
+        })
+
     @model_bp.route(f"/api/v{API_VERSION}/models/<string:modelName>", methods=["GET"])
     def apiGetModel(modelName: str) -> Response:
         if not model_manager.modelExists(modelName):
             return jsonify({"error": f"Model '{modelName}' not found"}), 404
         model = model_manager.getModel(modelName)
-        return jsonify(_serialize_model(modelName, model, include_bridge=True))
+        return jsonify(_serialize_model(_canonical_model_id(model, modelName), model, include_bridge=True))
 
     @model_bp.route(f"/api/v{API_VERSION}/models/<string:modelName>/binding", methods=["GET"])
     def apiGetModelBinding(modelName: str) -> Response:
         if not model_manager.modelExists(modelName):
             return jsonify({"error": f"Model '{modelName}' not found"}), 404
         model = model_manager.getModel(modelName)
+        canonicalModelId = _canonical_model_id(model, modelName)
         return jsonify({
+            "id": canonicalModelId,
             "binding": model.getModelBinding(),
             "compatibility_status": model.getBindingStatus(),
             "bridge_status": model.getBridgeStatus(),
@@ -291,7 +313,9 @@ def init_model_routes(model_manager: ModelManager):
                 return jsonify({"error": "binding or source_entities is required"}), 400
 
             savedBinding = model.setModelBinding(binding)
+            canonicalModelId = _canonical_model_id(model, modelName)
             return jsonify({
+                "id": canonicalModelId,
                 "binding": savedBinding,
                 "compatibility_status": model.getBindingStatus(),
                 "bridge_status": model.getBridgeStatus(),
@@ -306,7 +330,9 @@ def init_model_routes(model_manager: ModelManager):
 
         model = model_manager.getModel(modelName)
         model.clearModelBinding()
+        canonicalModelId = _canonical_model_id(model, modelName)
         return jsonify({
+            "id": canonicalModelId,
             "binding": None,
             "compatibility_status": model.getBindingStatus(),
             "bridge_status": model.getBridgeStatus(),
@@ -335,7 +361,7 @@ def init_model_routes(model_manager: ModelManager):
 
         model = model_manager.getModel(modelName)
         model.setLearningType(learningType)
-        return jsonify(_serialize_model(modelName, model, include_bridge=True))
+        return jsonify(_serialize_model(_canonical_model_id(model, modelName), model, include_bridge=True))
 
     @model_bp.route(f"/api/v{API_VERSION}/models/<string:modelName>/raw-observations", methods=["GET"])
     def apiListRawObservations(modelName: str) -> Response:

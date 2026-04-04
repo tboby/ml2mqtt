@@ -220,6 +220,7 @@ class AdapterApiRoutesTest(unittest.TestCase):
             payload["binding"]["outputs"]["prediction"]["entity_id"],
             "sensor.ml2mqtt_room_presence_prediction",
         )
+        self.assertEqual(payload["id"], "room presence")
 
     def test_create_model_rejects_mismatched_input_count(self):
         response = self.client.post(
@@ -265,6 +266,37 @@ class AdapterApiRoutesTest(unittest.TestCase):
         delete_response = self.client.delete("/api/v1/models/BindingModel/binding")
         self.assertEqual(delete_response.status_code, 200)
         self.assertEqual(delete_response.get_json()["compatibility_status"]["state"], "unbound")
+
+    def test_delete_model_allows_recreating_same_name(self):
+        create_response = self.client.post(
+            "/api/v1/models",
+            json={
+                "model_name": "Reusable Model",
+                "labels": ["A", "B"],
+                "source_entities": ["sensor.one", "sensor.two"],
+            },
+        )
+        self.assertEqual(create_response.status_code, 201)
+
+        delete_response = self.client.delete("/api/v1/models/Reusable Model")
+        self.assertEqual(delete_response.status_code, 200)
+        self.assertEqual(delete_response.get_json()["id"], "reusable model")
+        self.assertTrue(delete_response.get_json()["deleted"])
+
+        list_response = self.client.get("/api/v1/models")
+        self.assertEqual(list_response.status_code, 200)
+        self.assertEqual(list_response.get_json()["models"], [])
+
+        recreate_response = self.client.post(
+            "/api/v1/models",
+            json={
+                "model_name": "Reusable Model",
+                "labels": ["A", "B"],
+                "source_entities": ["sensor.one", "sensor.two"],
+            },
+        )
+        self.assertEqual(recreate_response.status_code, 201)
+        self.assertEqual(recreate_response.get_json()["id"], "reusable model")
 
 
 if __name__ == "__main__":

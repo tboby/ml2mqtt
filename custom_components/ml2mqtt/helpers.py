@@ -13,6 +13,10 @@ def safe_slug(value: str) -> str:
     return normalized or "model"
 
 
+def normalize_model_id(value: Any) -> str:
+    return str(value or "").strip().lower()
+
+
 def build_helper_entity_metadata(model_name: str) -> dict[str, Any]:
     object_id = safe_slug(model_name)
     prefix = f"ml2mqtt_{object_id}"
@@ -50,7 +54,7 @@ def build_entry_title(app_url: str) -> str:
 
 
 def serialize_model_reference(model: Mapping[str, Any], legacy_unique_prefix: str | None = None) -> dict[str, Any]:
-    model_id = str(model.get(CONF_MODEL_ID) or model.get("id") or "").strip()
+    model_id = normalize_model_id(model.get(CONF_MODEL_ID) or model.get("id"))
     reference = {
         CONF_MODEL_ID: model_id,
         CONF_MODEL_SLUG: str(model.get("slug") or safe_slug(model_id)),
@@ -66,7 +70,14 @@ def get_configured_models(entry: Any) -> list[dict[str, str]]:
     if CONF_MODELS in options:
         models = options.get(CONF_MODELS, [])
         if isinstance(models, list):
-            return [dict(model) for model in models if isinstance(model, dict)]
+            normalized_models: list[dict[str, str]] = []
+            for model in models:
+                if not isinstance(model, dict):
+                    continue
+                normalized_model = dict(model)
+                normalized_model[CONF_MODEL_ID] = normalize_model_id(normalized_model.get(CONF_MODEL_ID))
+                normalized_models.append(normalized_model)
+            return normalized_models
         return []
 
     data = getattr(entry, "data", {}) or {}
@@ -75,7 +86,7 @@ def get_configured_models(entry: Any) -> list[dict[str, str]]:
         return []
 
     return [{
-        CONF_MODEL_ID: str(legacy_model_id),
+        CONF_MODEL_ID: normalize_model_id(legacy_model_id),
         CONF_MODEL_SLUG: str(data.get(CONF_MODEL_SLUG) or safe_slug(str(legacy_model_id))),
         "name": str(getattr(entry, "title", legacy_model_id)),
     }]

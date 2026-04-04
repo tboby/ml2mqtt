@@ -15,6 +15,7 @@ from .helpers import (
     build_entry_title,
     build_helper_entity_metadata,
     get_configured_models,
+    normalize_model_id,
     normalize_app_url,
     safe_slug,
     serialize_model_reference,
@@ -104,7 +105,7 @@ class Ml2MqttFlowBase:
         return None
 
     def _model_identifier(self, model: dict[str, Any]) -> str:
-        return str(model.get(CONF_MODEL_ID) or model.get("id") or "").strip()
+        return normalize_model_id(model.get(CONF_MODEL_ID) or model.get("id"))
 
 
 class Ml2MqttConfigFlow(Ml2MqttFlowBase, config_entries.ConfigFlow, domain=DOMAIN):
@@ -282,7 +283,7 @@ class Ml2MqttOptionsFlow(Ml2MqttFlowBase, config_entries.OptionsFlowWithReload):
             available_actions = {"add_existing": "Add existing model", **available_actions}
         if configured_models:
             available_actions["rebind_model"] = "Update model inputs"
-            available_actions["remove_model"] = "Remove model"
+            available_actions["remove_model"] = "Delete model"
 
         if user_input is not None:
             return await getattr(self, f"async_step_{user_input['action']}")()
@@ -426,7 +427,7 @@ class Ml2MqttOptionsFlow(Ml2MqttFlowBase, config_entries.OptionsFlowWithReload):
         errors = {}
         if user_input is not None:
             try:
-                await self._api.async_clear_binding(user_input[CONF_MODEL_ID])
+                await self._api.async_delete_model(user_input[CONF_MODEL_ID])
                 remaining_models = [
                     model for model in configured_models if model[CONF_MODEL_ID] != user_input[CONF_MODEL_ID]
                 ]

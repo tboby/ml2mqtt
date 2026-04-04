@@ -6,6 +6,8 @@ from typing import Any
 
 from aiohttp import ClientError, ClientSession
 
+from .helpers import normalize_model_id
+
 
 class Ml2MqttApiError(Exception):
     pass
@@ -19,8 +21,9 @@ class Ml2MqttApiClient:
     @staticmethod
     def _normalize_model_payload(data: dict[str, Any]) -> dict[str, Any]:
         normalized = dict(data)
-        if "model_id" not in normalized and "id" in normalized:
-            normalized["model_id"] = str(normalized["id"])
+        model_id = normalize_model_id(normalized.get("model_id") or normalized.get("id"))
+        if model_id:
+            normalized["model_id"] = model_id
         return normalized
 
     async def _request(self, method: str, path: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -56,6 +59,9 @@ class Ml2MqttApiClient:
 
     async def async_create_model(self, payload: dict[str, Any]) -> dict[str, Any]:
         return self._normalize_model_payload(await self._request("POST", "/api/v1/models", payload))
+
+    async def async_delete_model(self, model_id: str) -> dict[str, Any]:
+        return self._normalize_model_payload(await self._request("DELETE", f"/api/v1/models/{model_id}"))
 
     async def async_get_binding(self, model_id: str) -> dict[str, Any]:
         return await self._request("GET", f"/api/v1/models/{model_id}/binding")
