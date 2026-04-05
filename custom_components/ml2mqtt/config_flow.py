@@ -13,6 +13,7 @@ from .api import Ml2MqttApiClient, Ml2MqttApiError
 from .const import CONF_APP_URL, CONF_MODEL_ID, CONF_MODELS, DEFAULT_APP_URL, DOMAIN
 from .helpers import (
     build_entry_title,
+    build_entity_aliases,
     build_helper_entity_metadata,
     get_configured_models,
     normalize_model_id,
@@ -182,6 +183,7 @@ class Ml2MqttConfigFlow(Ml2MqttFlowBase, config_entries.ConfigFlow, domain=DOMAI
                         selected_model_id,
                         {
                             "source_entities": user_input["source_entities"],
+                            "entity_aliases": build_entity_aliases(user_input["source_entities"]),
                             "binding": build_helper_entity_metadata(selected_model["name"]),
                         },
                     )
@@ -223,24 +225,25 @@ class Ml2MqttConfigFlow(Ml2MqttFlowBase, config_entries.ConfigFlow, domain=DOMAI
                 errors["labels"] = "invalid_labels"
 
         if user_input is not None and not errors:
-            try:
-                model = await self._api.async_create_model(
-                    {
-                        "model_name": self._create_new_defaults["model_name"],
-                        "labels": labels,
-                        "mqtt_topic": self._create_new_defaults["advanced"].get("mqtt_topic") or None,
-                        "default_value": self._create_new_defaults["advanced"].get("default_value", 9999),
-                        "source_entities": self._create_new_defaults["source_entities"],
-                        "binding": build_helper_entity_metadata(self._create_new_defaults["model_name"]),
-                    }
-                )
-                return self.async_create_entry(
-                    title=build_entry_title(self._app_url),
-                    data={CONF_APP_URL: self._app_url},
-                    options={CONF_MODELS: [serialize_model_reference(model)]},
-                )
-            except Ml2MqttApiError:
-                errors["base"] = "cannot_connect"
+                try:
+                    model = await self._api.async_create_model(
+                        {
+                            "model_name": self._create_new_defaults["model_name"],
+                            "labels": labels,
+                            "mqtt_topic": self._create_new_defaults["advanced"].get("mqtt_topic") or None,
+                            "default_value": self._create_new_defaults["advanced"].get("default_value", 9999),
+                            "source_entities": self._create_new_defaults["source_entities"],
+                            "entity_aliases": build_entity_aliases(self._create_new_defaults["source_entities"]),
+                            "binding": build_helper_entity_metadata(self._create_new_defaults["model_name"]),
+                        }
+                    )
+                    return self.async_create_entry(
+                        title=build_entry_title(self._app_url),
+                        data={CONF_APP_URL: self._app_url},
+                        options={CONF_MODELS: [serialize_model_reference(model)]},
+                    )
+                except Ml2MqttApiError:
+                    errors["base"] = "cannot_connect"
 
         return self.async_show_form(
             step_id="create_new",
@@ -333,6 +336,7 @@ class Ml2MqttOptionsFlow(Ml2MqttFlowBase, config_entries.OptionsFlowWithReload):
                         selected_model_id,
                         {
                             "source_entities": user_input["source_entities"],
+                            "entity_aliases": build_entity_aliases(user_input["source_entities"]),
                             "binding": build_helper_entity_metadata(selected_model["name"]),
                         },
                     )
@@ -370,20 +374,21 @@ class Ml2MqttOptionsFlow(Ml2MqttFlowBase, config_entries.OptionsFlowWithReload):
                 errors["labels"] = "invalid_labels"
 
         if user_input is not None and not errors:
-            try:
-                model = await self._api.async_create_model(
-                    {
-                        "model_name": self._create_new_defaults["model_name"],
-                        "labels": labels,
-                        "mqtt_topic": self._create_new_defaults["advanced"].get("mqtt_topic") or None,
-                        "default_value": self._create_new_defaults["advanced"].get("default_value", 9999),
-                        "source_entities": self._create_new_defaults["source_entities"],
-                        "binding": build_helper_entity_metadata(self._create_new_defaults["model_name"]),
-                    }
-                )
-                return self._options_entry([*self._configured_models(), serialize_model_reference(model)])
-            except Ml2MqttApiError:
-                errors["base"] = "cannot_connect"
+                try:
+                    model = await self._api.async_create_model(
+                        {
+                            "model_name": self._create_new_defaults["model_name"],
+                            "labels": labels,
+                            "mqtt_topic": self._create_new_defaults["advanced"].get("mqtt_topic") or None,
+                            "default_value": self._create_new_defaults["advanced"].get("default_value", 9999),
+                            "source_entities": self._create_new_defaults["source_entities"],
+                            "entity_aliases": build_entity_aliases(self._create_new_defaults["source_entities"]),
+                            "binding": build_helper_entity_metadata(self._create_new_defaults["model_name"]),
+                        }
+                    )
+                    return self._options_entry([*self._configured_models(), serialize_model_reference(model)])
+                except Ml2MqttApiError:
+                    errors["base"] = "cannot_connect"
 
         return self.async_show_form(
             step_id="create_new",
@@ -404,7 +409,10 @@ class Ml2MqttOptionsFlow(Ml2MqttFlowBase, config_entries.OptionsFlowWithReload):
             try:
                 await self._api.async_set_binding(
                     user_input[CONF_MODEL_ID],
-                    {"source_entities": user_input["source_entities"]},
+                    {
+                        "source_entities": user_input["source_entities"],
+                        "entity_aliases": build_entity_aliases(user_input["source_entities"]),
+                    },
                 )
                 return self._options_entry(configured_models)
             except Ml2MqttApiError:

@@ -114,6 +114,9 @@ def _build_binding_payload(model_name: str, payload: Dict[str, Any], existing: O
     if isinstance(payload.get("source_entities"), list):
         binding["sources"] = payload["source_entities"]
 
+    if isinstance(payload.get("entity_aliases"), dict):
+        binding["entity_aliases"] = payload["entity_aliases"]
+
     if not binding:
         return None
 

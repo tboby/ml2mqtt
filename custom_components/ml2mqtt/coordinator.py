@@ -36,6 +36,7 @@ class Ml2MqttCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.current_prediction: str | None = None
         self.current_confidence: float | None = None
         self.class_last_seen: dict[str, float] = {}
+        self.class_last_observed_at: dict[str, float] = {}
         self.runtime_status = "initializing"
         self.source_states: dict[str, Any] = {}
         self._unsubscribe_prediction = None
@@ -281,7 +282,20 @@ class Ml2MqttCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.current_prediction = payload.get("state")
         self.current_confidence = payload.get("confidence")
         if self.current_prediction:
-            self.class_last_seen[self.current_prediction] = time.monotonic()
+            observed_at = payload.get("observed_at")
+            should_update_last_seen = False
+            try:
+                observed_at_value = float(observed_at)
+            except (TypeError, ValueError):
+                should_update_last_seen = False
+            else:
+                previous_observed_at = self.class_last_observed_at.get(self.current_prediction)
+                if previous_observed_at is None or observed_at_value > previous_observed_at:
+                    self.class_last_observed_at[self.current_prediction] = observed_at_value
+                    should_update_last_seen = True
+
+            if should_update_last_seen:
+                self.class_last_seen[self.current_prediction] = time.monotonic()
         if self.compatibility_status.get("state") == "warning":
             self.runtime_status = "warning"
         else:

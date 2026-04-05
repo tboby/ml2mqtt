@@ -112,6 +112,10 @@ def build_device_identifier(entry_id: str, model_slug: str) -> str:
     return f"{entry_id}_{safe_slug(model_slug)}"
 
 
+def build_entity_aliases(source_entities: Sequence[str]) -> dict[str, str]:
+    return {entity_id: f"input_{idx}" for idx, entity_id in enumerate(source_entities)}
+
+
 def build_snapshot_payload(
     sources: Sequence[Mapping[str, Any]],
     source_snapshots: Mapping[str, Mapping[str, Any]],

@@ -166,6 +166,12 @@ class ModelService:
         entityMap: Dict[str, Any],
         entityAgeMap: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
+        entity_aliases = self._getEntityAliases()
+        if entity_aliases:
+            entityMap = self._applyEntityAliases(entityMap, entity_aliases)
+            if entityAgeMap:
+                entityAgeMap = self._applyEntityAliases(entityAgeMap, entity_aliases)
+
         sensorValues, sensorRecency = self._splitObservationFeatures(entityMap)
 
         def normalize_age(value: Any, default: float) -> float:
@@ -183,8 +189,10 @@ class ModelService:
 
         orderedEntities: List[str] = []
         seenEntities = set()
+        binding = self.getModelBinding()
+        canonicalSourceIds = self._getCanonicalSourceIds(binding, entity_aliases)
         for entityName in [
-            *self._getBindingSourceIds(self.getModelBinding()),
+            *canonicalSourceIds,
             *sensorValues.keys(),
             *sensorRecency.keys(),
         ]:
@@ -1308,6 +1316,23 @@ class ModelService:
                 normalized[name] = normalizedEntry
         return normalized
 
+    def _getEntityAliases(self) -> Dict[str, str]:
+        binding = self.getModelBinding()
+        if not binding:
+            return {}
+        aliases = binding.get("entity_aliases", {})
+        if isinstance(aliases, dict):
+            return {str(k): str(v) for k, v in aliases.items() if str(k).strip() and str(v).strip()}
+        return {}
+
+    def _applyEntityAliases(self, entityMap: Dict[str, Any], aliases: Dict[str, str]) -> Dict[str, Any]:
+        if not aliases:
+            return entityMap
+        remapped: Dict[str, Any] = {}
+        for key, value in entityMap.items():
+            remapped[aliases.get(key, key)] = value
+        return remapped
+
     def _getBindingSourceIds(self, binding: Optional[Dict[str, Any]]) -> List[str]:
         if not binding:
             return []
@@ -1322,8 +1347,9 @@ class ModelService:
                 "updated_at": time.time(),
             }
 
-        newSources = self._getBindingSourceIds(binding)
-        previousSources = self._getBindingSourceIds(previousBinding)
+        aliases = binding.get("entity_aliases", {})
+        newSources = self._getCanonicalSourceIds(binding, aliases)
+        previousSources = self._getCanonicalSourceIds(previousBinding, aliases) if previousBinding else []
         learnedSources = [
             entity.name
             for entity in self._modelstore.getEntityKeys()
@@ -1367,11 +1393,23 @@ class ModelService:
             "updated_at": time.time(),
         }
 
+    def _getCanonicalSourceIds(self, binding: Optional[Dict[str, Any]], aliases: Dict[str, str]) -> List[str]:
+        raw_ids = self._getBindingSourceIds(binding)
+        if not aliases:
+            return raw_ids
+        return [aliases.get(eid, eid) for eid in raw_ids]
+
     def _normalizeBinding(self, binding: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         if binding is None:
             return None
         if not isinstance(binding, dict):
             raise ValueError("Binding payload must be a JSON object")
+
+        entity_aliases = binding.get("entity_aliases", {})
+        if isinstance(entity_aliases, dict):
+            entity_aliases = {str(k): str(v) for k, v in entity_aliases.items() if str(k).strip() and str(v).strip()}
+        else:
+            entity_aliases = {}
 
         normalized = {
             "version": int(binding.get("version", 1)),
@@ -1379,6 +1417,7 @@ class ModelService:
             "trainer": self._normalizeBindingEntity(binding.get("trainer")),
             "outputs": self._normalizeBindingOutputs(binding.get("outputs", {})),
             "adapter": binding.get("adapter", {}) if isinstance(binding.get("adapter", {}), dict) else {},
+            "entity_aliases": entity_aliases,
             "updated_at": time.time(),
         }
         return normalized
