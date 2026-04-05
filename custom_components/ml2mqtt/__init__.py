@@ -74,7 +74,7 @@ def _cleanup_training_sample_entities(hass: HomeAssistant, entry: ConfigEntry, m
             entity_registry.async_update_entity(current_entity_id, new_entity_id=desired_entity_id)
 
 
-def _expected_model_entity_keys(entry: ConfigEntry, model_references: list[dict[str, str]]) -> set[tuple[str, str]]:
+def _expected_model_entity_keys(entry: ConfigEntry, model_references: list[dict[str, str]], labels_by_model: dict[str, list[str]] | None = None) -> set[tuple[str, str]]:
     expected_keys: set[tuple[str, str]] = set()
 
     for model in model_references:
@@ -93,12 +93,16 @@ def _expected_model_entity_keys(entry: ConfigEntry, model_references: list[dict[
             ("sensor", f"{entry.entry_id}_{model_slug}_training_samples"),
         })
 
+        if labels_by_model and model_id in labels_by_model:
+            for label in labels_by_model[model_id]:
+                expected_keys.add(("binary_sensor", f"{unique_prefix}_class_{safe_slug(label)}"))
+
     return expected_keys
 
 
-def _cleanup_removed_model_entities(hass: HomeAssistant, entry: ConfigEntry, model_references: list[dict[str, str]]) -> None:
+def _cleanup_removed_model_entities(hass: HomeAssistant, entry: ConfigEntry, model_references: list[dict[str, str]], labels_by_model: dict[str, list[str]] | None = None) -> None:
     entity_registry = er.async_get(hass)
-    expected_keys = _expected_model_entity_keys(entry, model_references)
+    expected_keys = _expected_model_entity_keys(entry, model_references, labels_by_model)
     removed = 0
 
     for entity_entry in list(er.async_entries_for_config_entry(entity_registry, entry.entry_id)):
@@ -226,12 +230,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     entry = primary_entry
     api = Ml2MqttApiClient(async_get_clientsession(hass), entry.data[CONF_APP_URL])
     model_references = get_configured_models(entry)
-    _cleanup_removed_model_entities(hass, entry, model_references)
-    _cleanup_training_sample_entities(hass, entry, model_references)
-    _cleanup_source_mirror_entities(hass)
-    _cleanup_removed_model_devices(hass, entry, model_references)
     coordinators: dict[str, Ml2MqttCoordinator] = {}
 
+    labels_by_model: dict[str, list[str]] = {}
     try:
         if not model_references:
             await api.async_list_models()
@@ -245,8 +246,15 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                     continue
                 raise
             coordinators[coordinator.model_id] = coordinator
+            if coordinator.data and "labels" in coordinator.data:
+                labels_by_model[coordinator.model_id] = coordinator.data["labels"]
     except Ml2MqttApiError as err:
         raise ConfigEntryNotReady(str(err)) from err
+
+    _cleanup_removed_model_entities(hass, entry, model_references, labels_by_model)
+    _cleanup_training_sample_entities(hass, entry, model_references)
+    _cleanup_source_mirror_entities(hass)
+    _cleanup_removed_model_devices(hass, entry, model_references)
 
     hass.data.setdefault(DOMAIN, {})[entry.entry_id] = {
         "api": api,

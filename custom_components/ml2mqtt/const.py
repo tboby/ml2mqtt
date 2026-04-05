@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 DOMAIN = "ml2mqtt"
-PLATFORMS = ["sensor", "select", "button"]
+PLATFORMS = ["sensor", "select", "button", "binary_sensor"]
 
 CONF_APP_URL = "app_url"
 CONF_MODEL_ID = "model_id"

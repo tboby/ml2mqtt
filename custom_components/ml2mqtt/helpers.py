@@ -42,6 +42,15 @@ def build_helper_entity_metadata(model_name: str) -> dict[str, Any]:
     }
 
 
+def build_class_presence_entity_id(model_name: str, label: str) -> dict[str, Any]:
+    object_id = safe_slug(model_name)
+    label_slug = safe_slug(label)
+    return {
+        "entity_id": f"binary_sensor.ml2mqtt_{object_id}_{label_slug}",
+        "name": f"{model_name} {label}",
+    }
+
+
 def normalize_app_url(app_url: str) -> str:
     return app_url.strip().rstrip("/")
 

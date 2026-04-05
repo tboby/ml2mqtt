@@ -34,6 +34,7 @@ class Ml2MqttCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.active_label = DISABLED_LABEL
         self.current_prediction: str | None = None
         self.current_confidence: float | None = None
+        self.class_last_seen: dict[str, float] = {}
         self.runtime_status = "initializing"
         self.source_states: dict[str, Any] = {}
         self._unsubscribe_prediction = None
@@ -278,6 +279,9 @@ class Ml2MqttCoordinator(DataUpdateCoordinator[dict[str, Any]]):
 
         self.current_prediction = payload.get("state")
         self.current_confidence = payload.get("confidence")
+        observed_at = payload.get("observed_at")
+        if self.current_prediction and observed_at is not None:
+            self.class_last_seen[self.current_prediction] = float(observed_at)
         if self.compatibility_status.get("state") == "warning":
             self.runtime_status = "warning"
         else:
