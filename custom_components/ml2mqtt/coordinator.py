@@ -3,14 +3,14 @@ from __future__ import annotations
 import json
 import logging
 from copy import deepcopy
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from homeassistant.components import mqtt
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import Event, HomeAssistant, callback
 from homeassistant.exceptions import ConfigEntryNotReady
-from homeassistant.helpers.event import async_track_state_change_event
+from homeassistant.helpers.event import async_track_state_change_event, async_track_time_interval
 from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, UpdateFailed
 
 from .api import Ml2MqttApiClient, Ml2MqttApiError
@@ -18,6 +18,7 @@ from .const import CONF_APP_URL, CONF_MODEL_ID, CONF_MODEL_SLUG, DISABLED_LABEL,
 from .helpers import build_device_identifier, build_model_edit_url, build_snapshot_payload
 
 _LOGGER = logging.getLogger(__name__)
+SNAPSHOT_REFRESH_INTERVAL = timedelta(seconds=5)
 
 
 class Ml2MqttCoordinator(DataUpdateCoordinator[dict[str, Any]]):
@@ -37,6 +38,7 @@ class Ml2MqttCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.source_states: dict[str, Any] = {}
         self._unsubscribe_prediction = None
         self._unsubscribe_state_listener = None
+        self._unsubscribe_snapshot_refresh = None
 
     async def _async_update_data(self) -> dict[str, Any]:
         try:
@@ -162,13 +164,15 @@ class Ml2MqttCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             if state is not None:
                 name = state.attributes.get("friendly_name") or name
 
-            current_state = state.state if state is not None else self.source_states.get(entity_id)
+            snapshot = self._build_source_snapshot(entity_id)
+            current_state = snapshot.get("state") if state is not None else self.source_states.get(entity_id)
             attributes = state.attributes if state is not None else {}
 
             details.append({
                 "entity_id": entity_id,
                 "name": name,
                 "state": current_state,
+                "age_seconds": snapshot.get("age_seconds"),
                 "unit_of_measurement": attributes.get("unit_of_measurement"),
                 "icon": attributes.get("icon"),
                 "device_class": attributes.get("device_class"),
@@ -213,6 +217,20 @@ class Ml2MqttCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         state = self.hass.states.get(entity_id)
         return state.state if state is not None else None
 
+    @callback
+    def _build_source_snapshot(self, entity_id: str) -> dict[str, Any]:
+        state = self.hass.states.get(entity_id)
+        if state is None:
+            return {"state": None, "age_seconds": None}
+
+        raw_state = state.state
+        if isinstance(raw_state, str) and raw_state.lower() in {"unknown", "unavailable", "none", "null"}:
+            return {"state": None, "age_seconds": None}
+
+        last_updated = getattr(state, "last_updated", None) or state.last_changed
+        age_seconds = max(0.0, (datetime.now(timezone.utc) - last_updated).total_seconds())
+        return {"state": raw_state, "age_seconds": age_seconds}
+
     async def _async_setup_runtime_subscriptions(self) -> None:
         if self._unsubscribe_prediction is not None:
             self._unsubscribe_prediction()
@@ -221,6 +239,10 @@ class Ml2MqttCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if self._unsubscribe_state_listener is not None:
             self._unsubscribe_state_listener()
             self._unsubscribe_state_listener = None
+
+        if self._unsubscribe_snapshot_refresh is not None:
+            self._unsubscribe_snapshot_refresh()
+            self._unsubscribe_snapshot_refresh = None
 
         if self.state_topic:
             self._unsubscribe_prediction = await mqtt.async_subscribe(
@@ -235,6 +257,13 @@ class Ml2MqttCoordinator(DataUpdateCoordinator[dict[str, Any]]):
                 self.hass,
                 self.source_entities,
                 self._async_handle_source_change,
+            )
+
+        if self.command_topic and self.source_entities:
+            self._unsubscribe_snapshot_refresh = async_track_time_interval(
+                self.hass,
+                self._async_handle_snapshot_refresh,
+                SNAPSHOT_REFRESH_INTERVAL,
             )
 
     @callback
@@ -271,13 +300,21 @@ class Ml2MqttCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         self.source_states[entity_id] = new_state.state if new_state is not None else None
         self.hass.async_create_task(self.async_publish_snapshot())
 
+    @callback
+    def _async_handle_snapshot_refresh(self, _now) -> None:
+        self.hass.async_create_task(self.async_publish_snapshot())
+
     async def async_publish_snapshot(self) -> None:
         if not self.command_topic:
             self.runtime_status = "mqtt_unavailable"
             self.async_update_listeners()
             return
 
-        payload = build_snapshot_payload(self.binding.get("sources", []), self.source_states, self.active_label)
+        source_snapshots = {
+            entity_id: self._build_source_snapshot(entity_id)
+            for entity_id in self.source_entities
+        }
+        payload = build_snapshot_payload(self.binding.get("sources", []), source_snapshots, self.active_label)
         await mqtt.async_publish(self.hass, self.command_topic, json.dumps(payload), qos=0, retain=False)
         self.runtime_status = "warning" if self.compatibility_status.get("state") == "warning" else "ready"
         self.async_update_listeners()
@@ -297,3 +334,6 @@ class Ml2MqttCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         if self._unsubscribe_state_listener is not None:
             self._unsubscribe_state_listener()
             self._unsubscribe_state_listener = None
+        if self._unsubscribe_snapshot_refresh is not None:
+            self._unsubscribe_snapshot_refresh()
+            self._unsubscribe_snapshot_refresh = None

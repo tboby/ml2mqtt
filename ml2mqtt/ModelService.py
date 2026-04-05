@@ -15,6 +15,22 @@ from preprocessors.base import BasePreprocessor
 from preprocessors.PreprocessorFactory import PreprocessorFactory
 from nodered.nodered_generator import NodeRedGenerator
 DISABLED_LABEL = "Disabled"
+RECENCY_FEATURE_SUFFIX = "__ml2mqtt_age_seconds"
+MISSING_SENSOR_RECENCY_SECONDS = 3600.0
+
+
+def build_recency_feature_name(entityName: str) -> str:
+    return f"{entityName}{RECENCY_FEATURE_SUFFIX}"
+
+
+def is_recency_feature_name(entityName: str) -> bool:
+    return entityName.endswith(RECENCY_FEATURE_SUFFIX)
+
+
+def get_source_entity_name_from_recency_feature(entityName: str) -> Optional[str]:
+    if not is_recency_feature_name(entityName):
+        return None
+    return entityName[:-len(RECENCY_FEATURE_SUFFIX)]
 
 
 class ModelService:
@@ -94,7 +110,11 @@ class ModelService:
 
     def getEntityKeys(self) -> List[EntityKey]:
         features = self._model.getFeatureImportance() or {}
-        entities = self._modelstore.getEntityKeys()
+        entities = [
+            entity
+            for entity in self._modelstore.getEntityKeys()
+            if not is_recency_feature_name(entity.name)
+        ]
         for entity in entities:
             entity.significance = features.get(entity.name, 0.0)
         return entities
@@ -118,6 +138,81 @@ class ModelService:
             return deepcopy(processorStorage)
         return {}
 
+    def _splitObservationFeatures(self, entityMap: Dict[str, Any]) -> tuple[Dict[str, Any], Dict[str, float]]:
+        sensorValues: Dict[str, Any] = {}
+        sensorRecency: Dict[str, float] = {}
+
+        for rawName, value in entityMap.items():
+            entityName = str(rawName)
+            if is_recency_feature_name(entityName):
+                sourceEntity = get_source_entity_name_from_recency_feature(entityName)
+                if sourceEntity is None:
+                    continue
+                try:
+                    sensorRecency[sourceEntity] = max(0.0, float(value))
+                except (TypeError, ValueError):
+                    sensorRecency[sourceEntity] = 0.0
+                continue
+            sensorValues[entityName] = value
+
+        return sensorValues, sensorRecency
+
+    def _encodeObservationRecency(
+        self,
+        entityMap: Dict[str, Any],
+        entityAgeMap: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        sensorValues, sensorRecency = self._splitObservationFeatures(entityMap)
+
+        def normalize_age(value: Any, default: float) -> float:
+            try:
+                return max(0.0, float(value))
+            except (TypeError, ValueError):
+                return default
+
+        if entityAgeMap:
+            for entityName, ageSeconds in entityAgeMap.items():
+                normalizedName = str(entityName).strip()
+                if not normalizedName:
+                    continue
+                sensorRecency[normalizedName] = normalize_age(ageSeconds, MISSING_SENSOR_RECENCY_SECONDS)
+
+        orderedEntities: List[str] = []
+        seenEntities = set()
+        for entityName in [
+            *self._getBindingSourceIds(self.getModelBinding()),
+            *sensorValues.keys(),
+            *sensorRecency.keys(),
+        ]:
+            normalizedName = str(entityName).strip()
+            if not normalizedName or normalizedName in seenEntities or is_recency_feature_name(normalizedName):
+                continue
+            seenEntities.add(normalizedName)
+            orderedEntities.append(normalizedName)
+
+        encoded: Dict[str, Any] = {}
+
+        for entityName in orderedEntities:
+            value = sensorValues.get(entityName)
+            if value is None:
+                encoded[entityName] = None
+                encoded[build_recency_feature_name(entityName)] = normalize_age(
+                    sensorRecency.get(entityName),
+                    MISSING_SENSOR_RECENCY_SECONDS,
+                )
+                continue
+
+            if entityName not in sensorRecency:
+                raise ValueError(f"missing_age_seconds:{entityName}")
+
+            encoded[entityName] = value
+            encoded[build_recency_feature_name(entityName)] = normalize_age(
+                sensorRecency.get(entityName),
+                0.0,
+            )
+
+        return encoded
+
     def _applyPreprocessors(
         self,
         entityMap: Dict[str, Any],
@@ -136,36 +231,42 @@ class ModelService:
         self,
         label: str,
         entityMap: Dict[str, Any],
+        entityAgeMap: Optional[Dict[str, Any]] = None,
         assignedTime: Optional[float] = None,
         persist_raw: bool = True,
         publish_prediction: bool = True,
         rebuild_model: bool = True,
     ) -> None:
         observationTime = assignedTime if assignedTime is not None else time.time()
+        encodedEntityMap = self._encodeObservationRecency(entityMap, entityAgeMap)
+        rawSensorValues, rawSensorRecency = self._splitObservationFeatures(encodedEntityMap)
+
         learningType = self.getLearningType()
         shouldUpdateLearningHistory = learningType != "DISABLED" and label != DISABLED_LABEL
 
         if publish_prediction:
             self.updateBridgeStatus({
-                "last_input_at": time.time(),
+                "last_input_at": observationTime,
                 "last_label": label,
                 "last_error": None,
+                "last_sensor_values": rawSensorValues,
+                "last_sensor_recency_seconds": rawSensorRecency,
                 "mqtt_connected": self._mqttClient._connected,
             })
-            self._recordRecentMqttHistory(entityMap)
+            self._recordRecentMqttHistory(encodedEntityMap)
 
         liveEntityValues: Optional[Dict[str, Any]] = None
         if publish_prediction:
-            liveProcessedEntityMap = self._applyPreprocessors(entityMap, self._runtimeProcessorStorage)
+            liveProcessedEntityMap = self._applyPreprocessors(encodedEntityMap, self._runtimeProcessorStorage)
             if liveProcessedEntityMap:
                 liveEntityValues = {k: v for k, v in liveProcessedEntityMap.items() if v is not None}
 
         if persist_raw and shouldUpdateLearningHistory:
-            self._modelstore.addRawObservation(label, entityMap, observationTime)
+            self._modelstore.addRawObservation(label, encodedEntityMap, observationTime)
 
         if shouldUpdateLearningHistory:
             processorStorage = self._getStoredProcessorStorage()
-            processedEntityMap = self._applyPreprocessors(entityMap, processorStorage)
+            processedEntityMap = self._applyPreprocessors(encodedEntityMap, processorStorage)
             self._modelstore.saveDict("processor_storage", processorStorage)
 
             if processedEntityMap:
@@ -208,11 +309,22 @@ class ModelService:
                 return
 
         topic = self.getMqttTopic()
-        self._mqttClient.publish(f"{topic}/state", json.dumps({"state": prediction, "confidence": confidence}))
+        self._mqttClient.publish(
+            f"{topic}/state",
+            json.dumps({
+                "state": prediction,
+                "confidence": confidence,
+                "observed_at": observationTime,
+                "sensor_values": rawSensorValues,
+                "sensor_recency_seconds": rawSensorRecency,
+            }),
+        )
         self.updateBridgeStatus({
-            "last_prediction_at": time.time(),
+            "last_prediction_at": observationTime,
             "last_prediction": prediction,
             "last_confidence": confidence,
+            "last_sensor_values": rawSensorValues,
+            "last_sensor_recency_seconds": rawSensorRecency,
             "mqtt_connected": self._mqttClient._connected,
         })
         self._logger.info(f"Predicted label: {prediction} with confidence {confidence}")
@@ -266,14 +378,30 @@ class ModelService:
 
         label: str = DISABLED_LABEL
         entityMap: Dict[str, Any] = {}
+        entityAgeMap: Dict[str, Any] = {}
+        missingAgeEntities: List[str] = []
 
         for entity in entities:
             if "label" in entity:
                 label = entity["label"]
             elif "entity_id" in entity and "state" in entity:
-                entityMap[entity["entity_id"]] = entity["state"]
+                entityId = entity["entity_id"]
+                entityMap[entityId] = entity["state"]
+                if "age_seconds" in entity:
+                    entityAgeMap[entityId] = entity["age_seconds"]
+                else:
+                    missingAgeEntities.append(entityId)
 
-        self._processRawObservation(label, entityMap)
+        if missingAgeEntities:
+            self._logger.warning("Missing age_seconds for entities: %s", ", ".join(missingAgeEntities))
+            self.updateBridgeStatus({
+                "last_input_at": time.time(),
+                "last_error": "missing_age_seconds",
+                "mqtt_connected": self._mqttClient._connected,
+            })
+            return
+
+        self._processRawObservation(label, entityMap, entityAgeMap=entityAgeMap)
 
     def getMqttTopic(self) -> str:
         return self._modelstore.getMqttTopic() or ""
@@ -339,7 +467,7 @@ class ModelService:
             self._processRawObservation(
                 observation.label,
                 observation.sensorValues,
-                observation.time,
+                assignedTime=observation.time,
                 persist_raw=False,
                 publish_prediction=False,
                 rebuild_model=rebuild_during_replay,
@@ -359,8 +487,29 @@ class ModelService:
         return self._modelstore.getLabels() + self.getModelConfig("labels", [])
 
     def deleteEntity(self, entityName: str) -> None:
-        self._modelstore.deleteEntity(entityName)
-        # Rebuild the model after entity deletion
+        availableEntities = {entity.name for entity in self._modelstore.getEntityKeys()}
+        entitiesToDelete = [entityName]
+
+        if is_recency_feature_name(entityName):
+            sourceEntity = get_source_entity_name_from_recency_feature(entityName)
+            if sourceEntity and sourceEntity in availableEntities:
+                entitiesToDelete.append(sourceEntity)
+        else:
+            recencyFeature = build_recency_feature_name(entityName)
+            if recencyFeature in availableEntities:
+                entitiesToDelete.append(recencyFeature)
+
+        deleted = False
+        for name in entitiesToDelete:
+            if name not in availableEntities:
+                continue
+            self._modelstore.deleteEntity(name)
+            availableEntities.remove(name)
+            deleted = True
+
+        if not deleted:
+            raise ValueError("Entity not found")
+
         self._populateModel()
 
     def getLabelStats(self) -> Optional[Dict[str, Any]]:
@@ -604,7 +753,11 @@ class ModelService:
 
         newSources = self._getBindingSourceIds(binding)
         previousSources = self._getBindingSourceIds(previousBinding)
-        learnedSources = [entity.name for entity in self._modelstore.getEntityKeys()]
+        learnedSources = [
+            entity.name
+            for entity in self._modelstore.getEntityKeys()
+            if not is_recency_feature_name(entity.name)
+        ]
 
         warnings: List[Dict[str, str]] = []
 
@@ -691,7 +844,11 @@ class ModelService:
                 "retraining_required": False,
             }
 
-        learnedSources = [entity.name for entity in self._modelstore.getEntityKeys()]
+        learnedSources = [
+            entity.name
+            for entity in self._modelstore.getEntityKeys()
+            if not is_recency_feature_name(entity.name)
+        ]
         if learnedSources:
             return deepcopy(self._buildCompatibilityStatus(None, binding))
 

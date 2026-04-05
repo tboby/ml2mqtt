@@ -5,7 +5,7 @@ from pathlib import Path
 
 from flask import Flask
 
-from ModelService import ModelService
+from ModelService import ModelService, MISSING_SENSOR_RECENCY_SECONDS, build_recency_feature_name
 from ModelStore import ModelStore
 from ModelManager import ModelManager
 from routes.model_routes import init_model_routes
@@ -60,7 +60,7 @@ class ModelBindingServiceTest(unittest.TestCase):
         self.assertIn("source_membership_changed", warning_codes)
         self.assertEqual(self.model.getObservationCount(), 0)
 
-    def test_bound_model_accepts_legacy_snapshot_payload(self):
+    def test_bound_model_rejects_payload_without_age_seconds(self):
         self.model.setModelBinding({
             "sources": ["sensor.one", "sensor.two"],
         })
@@ -72,12 +72,12 @@ class ModelBindingServiceTest(unittest.TestCase):
 
         bridge_status = self.model.getBridgeStatus()
         self.assertIn("last_input_at", bridge_status)
-        self.assertTrue(self.mqtt.published)
-        published_topic, published_payload = self.mqtt.published[-1]
-        self.assertEqual(published_topic, "ml2mqtt/presence-model/state")
-        self.assertEqual(json.loads(published_payload)["confidence"], 0)
+        self.assertEqual(bridge_status["last_error"], "missing_age_seconds")
+        self.assertFalse(self.mqtt.published)
+        self.assertEqual(self.model.getRawObservationCount(), 0)
+        self.assertEqual(self.model.getObservationCount(), 0)
 
-    def test_unbound_model_accepts_legacy_snapshot_payload(self):
+    def test_unbound_model_rejects_payload_without_age_seconds(self):
         self.model.predictLabel(json.dumps([
             {"entity_id": "sensor.one", "state": 12.5},
             {"entity_id": "sensor.two", "state": 3.1},
@@ -85,7 +85,8 @@ class ModelBindingServiceTest(unittest.TestCase):
 
         bridge_status = self.model.getBridgeStatus()
         self.assertEqual(bridge_status["compatibility_status"]["state"], "unbound")
-        self.assertTrue(self.mqtt.published)
+        self.assertEqual(bridge_status["last_error"], "missing_age_seconds")
+        self.assertFalse(self.mqtt.published)
         self.assertEqual(self.model.getRawObservationCount(), 0)
         self.assertEqual(self.model.getObservationCount(), 0)
 
@@ -98,16 +99,16 @@ class ModelBindingServiceTest(unittest.TestCase):
 
         self.model.predictLabel(json.dumps([
             {"label": "Kitchen"},
-            {"entity_id": "sensor.one", "state": 10.0},
-            {"entity_id": "sensor.two", "state": 2.0},
+            {"entity_id": "sensor.one", "state": 10.0, "age_seconds": 0.0},
+            {"entity_id": "sensor.two", "state": 2.0, "age_seconds": 0.0},
         ]))
         processor_storage = self.store.getDict("processor_storage")
 
         self.mqtt.published.clear()
         self.model.predictLabel(json.dumps([
             {"label": "Disabled"},
-            {"entity_id": "sensor.one", "state": 99.0},
-            {"entity_id": "sensor.two", "state": 50.0},
+            {"entity_id": "sensor.one", "state": 99.0, "age_seconds": 0.0},
+            {"entity_id": "sensor.two", "state": 50.0, "age_seconds": 0.0},
         ]))
 
         self.assertTrue(self.mqtt.published)
@@ -122,7 +123,9 @@ class ModelBindingServiceTest(unittest.TestCase):
                 "label": "Kitchen",
                 "sensorValues": {
                     "sensor.one": 12.5,
+                    build_recency_feature_name("sensor.one"): 0.0,
                     "sensor.two": 3.1,
+                    build_recency_feature_name("sensor.two"): 0.0,
                 },
             }
         ])
@@ -148,14 +151,18 @@ class ModelBindingServiceTest(unittest.TestCase):
                 "label": "Kitchen",
                 "sensorValues": {
                     "sensor.one": 12.5,
+                    build_recency_feature_name("sensor.one"): 0.0,
                     "sensor.two": 3.1,
+                    build_recency_feature_name("sensor.two"): 0.0,
                 },
             },
             {
                 "label": "Office",
                 "sensorValues": {
                     "sensor.one": 4.2,
+                    build_recency_feature_name("sensor.one"): 0.0,
                     "sensor.two": 8.9,
+                    build_recency_feature_name("sensor.two"): 0.0,
                 },
             },
         ])
@@ -169,13 +176,134 @@ class ModelBindingServiceTest(unittest.TestCase):
                 "label": "Kitchen",
                 "sensorValues": {
                     "sensor.one": 12.5,
+                    build_recency_feature_name("sensor.one"): 0.0,
                     "sensor.two": 3.1,
+                    build_recency_feature_name("sensor.two"): 0.0,
                 },
             }
         ])
 
         self.assertEqual(self.model.getObservationCount(), 0)
         self.assertFalse(self.mqtt.published)
+
+    def test_replay_preserves_sensor_recency_features(self):
+        self.model.setLearningType("EAGER")
+
+        self.model.replayRawObservations([
+            {
+                "time": 100.0,
+                "label": "Kitchen",
+                "sensorValues": {
+                    "sensor.one": 12.5,
+                    build_recency_feature_name("sensor.one"): 0.0,
+                    "sensor.two": 3.1,
+                    build_recency_feature_name("sensor.two"): 0.0,
+                },
+            },
+            {
+                "time": 105.0,
+                "label": "Kitchen",
+                "sensorValues": {
+                    "sensor.one": 12.5,
+                    build_recency_feature_name("sensor.one"): 7.0,
+                    "sensor.two": 4.2,
+                    build_recency_feature_name("sensor.two"): 0.0,
+                },
+            },
+        ])
+
+        observations = self.model.getObservations()
+        latest = observations[0]
+        self.assertAlmostEqual(latest.sensorValues[build_recency_feature_name("sensor.one")], 7.0)
+        self.assertAlmostEqual(latest.sensorValues[build_recency_feature_name("sensor.two")], 0.0)
+
+    def test_live_predictions_publish_sensor_recency_metadata(self):
+        self.model.setLearningType("EAGER")
+        self.model.setModelBinding({
+            "sources": ["sensor.one", "sensor.two"],
+        })
+
+        self.model.predictLabel(json.dumps([
+            {"label": "Kitchen"},
+            {"entity_id": "sensor.one", "state": 12.5, "age_seconds": 0.0},
+            {"entity_id": "sensor.two", "state": 3.1, "age_seconds": 0.0},
+        ]))
+
+        self.model.predictLabel(json.dumps([
+            {"label": "Kitchen"},
+            {"entity_id": "sensor.one", "state": 12.5, "age_seconds": 7.0},
+            {"entity_id": "sensor.two", "state": 4.2, "age_seconds": 0.0},
+        ]))
+
+        self.assertEqual(self.model.getBindingStatus()["state"], "ready")
+
+        observations = self.model.getObservations()
+        latest = observations[0]
+        self.assertAlmostEqual(latest.sensorValues[build_recency_feature_name("sensor.one")], 7.0)
+        self.assertAlmostEqual(latest.sensorValues[build_recency_feature_name("sensor.two")], 0.0)
+
+        published_topic, published_payload = self.mqtt.published[-1]
+        self.assertEqual(published_topic, "ml2mqtt/presence-model/state")
+
+        payload = json.loads(published_payload)
+        self.assertEqual(payload["sensor_values"], {
+            "sensor.one": 12.5,
+            "sensor.two": 4.2,
+        })
+        self.assertEqual(payload["sensor_recency_seconds"], {
+            "sensor.one": 7.0,
+            "sensor.two": 0.0,
+        })
+
+        bridge_status = self.model.getBridgeStatus()
+        self.assertEqual(bridge_status["last_sensor_recency_seconds"], {
+            "sensor.one": 7.0,
+            "sensor.two": 0.0,
+        })
+
+    def test_missing_sensor_values_use_max_recency(self):
+        self.model.setLearningType("EAGER")
+        self.model.setModelBinding({
+            "sources": ["sensor.one", "sensor.two"],
+        })
+        self.model.addPreprocessor("null_handler", {
+            "sensor": [{"SELECT_ALL": True}],
+            "replacementType": "float",
+            "nullReplacement": -1,
+        })
+
+        self.model.predictLabel(json.dumps([
+            {"label": "Kitchen"},
+            {"entity_id": "sensor.one", "state": 12.5, "age_seconds": 0.0},
+            {"entity_id": "sensor.two", "state": 3.1, "age_seconds": 0.0},
+        ]))
+
+        self.model.predictLabel(json.dumps([
+            {"label": "Kitchen"},
+            {"entity_id": "sensor.one", "state": 12.5, "age_seconds": 7.0},
+            {"entity_id": "sensor.two", "state": None, "age_seconds": None},
+        ]))
+
+        observations = self.model.getObservations()
+        latest = observations[0]
+        self.assertAlmostEqual(latest.sensorValues[build_recency_feature_name("sensor.one")], 7.0)
+        self.assertAlmostEqual(
+            latest.sensorValues[build_recency_feature_name("sensor.two")],
+            MISSING_SENSOR_RECENCY_SECONDS,
+        )
+
+        published_topic, published_payload = self.mqtt.published[-1]
+        self.assertEqual(published_topic, "ml2mqtt/presence-model/state")
+
+        payload = json.loads(published_payload)
+        self.assertEqual(payload["sensor_values"], {
+            "sensor.one": 12.5,
+            "sensor.two": None,
+        })
+        self.assertEqual(payload["sensor_recency_seconds"], {
+            "sensor.one": 7.0,
+            "sensor.two": MISSING_SENSOR_RECENCY_SECONDS,
+        })
 
 
 class AdapterApiRoutesTest(unittest.TestCase):

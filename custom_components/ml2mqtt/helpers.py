@@ -105,7 +105,7 @@ def build_device_identifier(entry_id: str, model_slug: str) -> str:
 
 def build_snapshot_payload(
     sources: Sequence[Mapping[str, Any]],
-    source_states: Mapping[str, Any],
+    source_snapshots: Mapping[str, Mapping[str, Any]],
     active_label: str | None,
 ) -> list[dict[str, Any]]:
     payload: list[dict[str, Any]] = []
@@ -113,9 +113,11 @@ def build_snapshot_payload(
         entity_id = source.get("entity_id")
         if not entity_id:
             continue
+        snapshot = source_snapshots.get(entity_id, {})
         payload.append({
             "entity_id": entity_id,
-            "state": source_states.get(entity_id),
+            "state": snapshot.get("state"),
+            "age_seconds": snapshot.get("age_seconds"),
         })
 
     if active_label and active_label != DISABLED_LABEL:
