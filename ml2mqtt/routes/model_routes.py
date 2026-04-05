@@ -345,6 +345,13 @@ def init_model_routes(model_manager: ModelManager):
         model = model_manager.getModel(modelName)
         return jsonify(model.getBridgeStatus())
 
+    @model_bp.route(f"/api/v{API_VERSION}/models/<string:modelName>/analysis", methods=["GET"])
+    def apiGetAnalysis(modelName: str) -> Response:
+        if not model_manager.modelExists(modelName):
+            return jsonify({"error": f"Model '{modelName}' not found"}), 404
+        model = model_manager.getModel(modelName)
+        return jsonify(model.getAnalysisSummary())
+
     @model_bp.route(f"/api/v{API_VERSION}/models/<string:modelName>/learning-type", methods=["PUT"])
     def apiSetModelLearningType(modelName: str) -> Response:
         if not model_manager.modelExists(modelName):
@@ -471,7 +478,7 @@ def init_model_routes(model_manager: ModelManager):
 
     @model_bp.route("/edit-model/<string:modelName>/<section>")
     def editModel(modelName: str, section: str = "settings") -> str:
-        validSections = ["settings", "entities", "observations", "preprocessors", "postprocessors", "mqtt", "nodered"]
+        validSections = ["settings", "analysis", "entities", "observations", "preprocessors", "postprocessors", "mqtt", "nodered"]
 
         if section not in validSections:
             abort(404)
@@ -488,6 +495,7 @@ def init_model_routes(model_manager: ModelManager):
                 self.rawObservationCount: int = 0
                 self.observationCount: int = 0
                 self.learningType: str = "DISABLED"
+                self.analysis: Dict[str, Any] = {}
 
         model = ViewModel()
         modelService = model_manager.getModel(modelName)
@@ -520,6 +528,8 @@ def init_model_routes(model_manager: ModelManager):
                 "labelStats": model_manager.getModel(modelName).getLabelStats(),
                 "learningType": model_manager.getModel(modelName).getLearningType(),
             }
+        elif section == "analysis":
+            model.analysis = modelService.getAnalysisSummary()
         elif section == "postprocessors":
             logger.info(f"{list(map(lambda processor: processor.to_dict(),model_manager.getModel(modelName).getPostprocessors()))}")
             model.postprocessors = map(lambda processor: processor.to_dict(),model_manager.getModel(modelName).getPostprocessors())

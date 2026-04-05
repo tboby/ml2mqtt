@@ -7,6 +7,8 @@
     <nav class="card menu">
       <a href="{{ url_for('model.editModel', modelName=model.name, section='settings') }}"
          class="menu-link {% if activeSection == 'settings' %}active{% endif %}">Model</a>
+      <a href="{{ url_for('model.editModel', modelName=model.name, section='analysis') }}"
+         class="menu-link {% if activeSection == 'analysis' %}active{% endif %}">Analysis</a>
       <a href="{{ url_for('model.editModel', modelName=model.name, section='entities') }}"
          class="menu-link {% if activeSection == 'entities' %}active{% endif %}">Entities</a>
       <a href="{{ url_for('model.editModel', modelName=model.name, section='observations') }}"

@@ -1,0 +1,249 @@
+<h2>Model Analysis</h2>
+<h4 style="color: #7e8c9c; margin-top: -0.25rem; margin-bottom: 1.5rem;">Model: {{ model.name }}</h4>
+
+{% set analysis = model.analysis %}
+{% set overview = analysis.overview or {} %}
+{% set coverage = analysis.coverage or {} %}
+{% set quality = analysis.quality or {} %}
+{% set features = analysis.features or {} %}
+{% set sources = analysis.sources or {} %}
+{% set recommendations = analysis.recommendations or [] %}
+{% set confusion = quality.confusion_matrix or {} %}
+{% set sequence = quality.sequence_evaluation or {} %}
+{% set sequence_confusion = sequence.confusion_matrix or {} %}
+
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.9rem; margin-bottom: 1.5rem;">
+  <div style="background: #18222d; border: 1px solid #2c3e50; border-radius: 8px; padding: 1rem;">
+    <div style="color: #8ea1b5; font-size: 0.85rem;">Accuracy</div>
+    <div style="font-size: 1.5rem; font-weight: 700; margin-top: 0.35rem;">{% if overview.accuracy is not none %}{{ '%.1f'|format(overview.accuracy * 100) }}%{% else %}N/A{% endif %}</div>
+  </div>
+  <div style="background: #18222d; border: 1px solid #2c3e50; border-radius: 8px; padding: 1rem;">
+    <div style="color: #8ea1b5; font-size: 0.85rem;">Training Observations</div>
+    <div style="font-size: 1.5rem; font-weight: 700; margin-top: 0.35rem;">{{ overview.observation_count or 0 }}</div>
+  </div>
+  <div style="background: #18222d; border: 1px solid #2c3e50; border-radius: 8px; padding: 1rem;">
+    <div style="color: #8ea1b5; font-size: 0.85rem;">Raw Recordings</div>
+    <div style="font-size: 1.5rem; font-weight: 700; margin-top: 0.35rem;">{{ overview.raw_observation_count or 0 }}</div>
+  </div>
+  <div style="background: #18222d; border: 1px solid #2c3e50; border-radius: 8px; padding: 1rem;">
+    <div style="color: #8ea1b5; font-size: 0.85rem;">Labels / Sources</div>
+    <div style="font-size: 1.5rem; font-weight: 700; margin-top: 0.35rem;">{{ overview.label_count or 0 }} / {{ overview.source_count or 0 }}</div>
+  </div>
+</div>
+
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.9rem; margin-bottom: 1.5rem;">
+  <div style="background: #101820; border: 1px solid #2c3e50; border-radius: 8px; padding: 1rem;">
+    <div style="color: #8ea1b5; font-size: 0.85rem;">Chronological Accuracy</div>
+    <div style="font-size: 1.35rem; font-weight: 700; margin-top: 0.35rem;">{% if sequence.accuracy is not none %}{{ '%.1f'|format(sequence.accuracy * 100) }}%{% else %}N/A{% endif %}</div>
+  </div>
+  <div style="background: #101820; border: 1px solid #2c3e50; border-radius: 8px; padding: 1rem;">
+    <div style="color: #8ea1b5; font-size: 0.85rem;">Steady-State Accuracy</div>
+    <div style="font-size: 1.35rem; font-weight: 700; margin-top: 0.35rem;">{% if sequence.stationary_accuracy is not none %}{{ '%.1f'|format(sequence.stationary_accuracy * 100) }}%{% else %}N/A{% endif %}</div>
+  </div>
+  <div style="background: #101820; border: 1px solid #2c3e50; border-radius: 8px; padding: 1rem;">
+    <div style="color: #8ea1b5; font-size: 0.85rem;">Immediate Transition Rate</div>
+    <div style="font-size: 1.35rem; font-weight: 700; margin-top: 0.35rem;">{% if sequence.immediate_transition_rate is not none %}{{ '%.1f'|format(sequence.immediate_transition_rate * 100) }}%{% else %}N/A{% endif %}</div>
+  </div>
+  <div style="background: #101820; border: 1px solid #2c3e50; border-radius: 8px; padding: 1rem;">
+    <div style="color: #8ea1b5; font-size: 0.85rem;">Average Transition Lag</div>
+    <div style="font-size: 1.35rem; font-weight: 700; margin-top: 0.35rem;">{% if sequence.average_transition_lag_seconds is not none %}{{ '%.1f'|format(sequence.average_transition_lag_seconds) }}s{% else %}N/A{% endif %}</div>
+  </div>
+</div>
+
+<section style="background: #18222d; border: 1px solid #2c3e50; border-radius: 8px; padding: 1rem; margin-bottom: 1.5rem;">
+  <h3 style="margin-top: 0;">Live-Like Evaluation</h3>
+  <p style="margin-top: 0; color: #8ea1b5;">This trains on earlier contiguous runs and tests on later runs, which is closer to how movement tracking behaves in practice than a random holdout.</p>
+  {% if sequence.accuracy is not none %}
+  <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.75rem;">
+    <div><strong>Train/Test</strong><br><span style="color: #8ea1b5;">{{ sequence.train_observations }} train observations across {{ sequence.train_runs }} runs, then {{ sequence.test_observations }} test observations across {{ sequence.test_runs }} runs.</span></div>
+    <div><strong>Transitions</strong><br><span style="color: #8ea1b5;">{{ sequence.transition_count }} room changes, {{ sequence.settled_transition_count }} settled within the new room, {{ sequence.missed_transition_count }} never settled before the next change.</span></div>
+    <div><strong>Steady State</strong><br><span style="color: #8ea1b5;">{{ sequence.stationary_samples }} same-room samples were available for checking stickiness and stationary mistakes.</span></div>
+  </div>
+  {% else %}
+  <p style="color: #8ea1b5; margin-bottom: 0;">Not enough chronological run data yet for a live-like evaluation.</p>
+  {% endif %}
+</section>
+
+<div style="background: #18222d; border: 1px solid #2c3e50; border-radius: 8px; padding: 1rem; margin-bottom: 1.5rem;">
+  <h3 style="margin-top: 0;">What To Improve Next</h3>
+  {% if recommendations %}
+    <div style="display: grid; gap: 0.75rem;">
+      {% for recommendation in recommendations %}
+      <div style="border-left: 4px solid {% if recommendation.severity == 'high' %}#ff7b72{% elif recommendation.severity == 'medium' %}#f2cc60{% else %}#58a6ff{% endif %}; background: #101820; padding: 0.85rem 1rem; border-radius: 6px;">
+        <div style="font-weight: 700; margin-bottom: 0.25rem;">{{ recommendation.title }}</div>
+        <div style="color: #8ea1b5;">{{ recommendation.detail }}</div>
+      </div>
+      {% endfor %}
+    </div>
+  {% else %}
+    <p style="color: #8ea1b5; margin-bottom: 0;">No recommendations yet.</p>
+  {% endif %}
+</div>
+
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 1rem; margin-bottom: 1.5rem; align-items: start;">
+  <section style="background: #18222d; border: 1px solid #2c3e50; border-radius: 8px; padding: 1rem;">
+    <h3 style="margin-top: 0;">Label Coverage</h3>
+    <p style="margin-top: 0; color: #8ea1b5;">Aim for at least {{ coverage.recommended_min_per_label or 0 }} samples per label.</p>
+    {% if coverage.labels %}
+    <table style="width: 100%; border-collapse: collapse;">
+      <thead>
+        <tr style="background: #1f2d3a;">
+          <th style="padding: 0.6rem; text-align: left;">Label</th>
+          <th style="padding: 0.6rem; text-align: right;">Count</th>
+          <th style="padding: 0.6rem; text-align: right;">Share</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in coverage.labels %}
+        <tr style="border-bottom: 1px solid #2c3e50;">
+          <td style="padding: 0.6rem;">
+            {{ item.label }}
+            {% if item.needs_more %}<span style="color: #f2cc60; font-size: 0.85rem;"> - needs more</span>{% endif %}
+          </td>
+          <td style="padding: 0.6rem; text-align: right;">{{ item.count }}</td>
+          <td style="padding: 0.6rem; text-align: right;">{{ '%.1f'|format(item.share * 100) }}%</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p style="color: #8ea1b5; margin-bottom: 0;">No derived observations yet.</p>
+    {% endif %}
+  </section>
+
+  <section style="background: #18222d; border: 1px solid #2c3e50; border-radius: 8px; padding: 1rem;">
+    <h3 style="margin-top: 0;">Per-Label Quality</h3>
+    {% if quality.labels %}
+    <table style="width: 100%; border-collapse: collapse;">
+      <thead>
+        <tr style="background: #1f2d3a;">
+          <th style="padding: 0.6rem; text-align: left;">Label</th>
+          <th style="padding: 0.6rem; text-align: right;">Precision</th>
+          <th style="padding: 0.6rem; text-align: right;">Recall</th>
+          <th style="padding: 0.6rem; text-align: right;">F1</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in quality.labels %}
+        <tr style="border-bottom: 1px solid #2c3e50;">
+          <td style="padding: 0.6rem;">{{ item.label }}</td>
+          <td style="padding: 0.6rem; text-align: right;">{{ '%.2f'|format(item.precision) }}</td>
+          <td style="padding: 0.6rem; text-align: right;">{{ '%.2f'|format(item.recall) }}</td>
+          <td style="padding: 0.6rem; text-align: right;">{{ '%.2f'|format(item.f1) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p style="color: #8ea1b5; margin-bottom: 0;">Quality metrics will appear once the model has enough data to train.</p>
+    {% endif %}
+  </section>
+</div>
+
+<div style="display: grid; grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr); gap: 1rem; margin-bottom: 1.5rem; align-items: start;">
+  <section style="background: #18222d; border: 1px solid #2c3e50; border-radius: 8px; padding: 1rem; overflow-x: auto;">
+    <h3 style="margin-top: 0;">Chronological Confusion Matrix</h3>
+    <p style="margin-top: 0; color: #8ea1b5;">Rows are actual future labels. Columns are predictions after training on earlier runs.</p>
+    {% if sequence_confusion.labels and sequence_confusion.matrix %}
+    <table style="border-collapse: collapse; min-width: 100%;">
+      <thead>
+        <tr style="background: #1f2d3a;">
+          <th style="padding: 0.6rem; text-align: left; position: sticky; left: 0; background: #1f2d3a;">Actual</th>
+          {% for label in sequence_confusion.labels %}
+          <th style="padding: 0.6rem; text-align: right; white-space: nowrap;">{{ label }}</th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for row_label in sequence_confusion.labels %}
+        {% set row_index = loop.index0 %}
+        {% set row = sequence_confusion.matrix[row_index] %}
+        <tr style="border-bottom: 1px solid #2c3e50;">
+          <td style="padding: 0.6rem; position: sticky; left: 0; background: #18222d; font-weight: 700;">{{ row_label }}</td>
+          {% for cell in row %}
+          <td style="padding: 0.6rem; text-align: right; color: {% if loop.index0 == row_index %}#7ee787{% elif cell > 0 %}#ffb86b{% else %}#8ea1b5{% endif %};">{{ cell }}</td>
+          {% endfor %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p style="color: #8ea1b5; margin-bottom: 0;">Confusion data will appear once the model has enough trained holdout data.</p>
+    {% endif %}
+  </section>
+
+  <section style="background: #18222d; border: 1px solid #2c3e50; border-radius: 8px; padding: 1rem;">
+    <h3 style="margin-top: 0;">Most Confused Pairs</h3>
+    {% if sequence.top_confusions %}
+    <div style="display: grid; gap: 0.65rem;">
+      {% for item in sequence.top_confusions %}
+      <div style="background: #101820; border: 1px solid #2c3e50; border-radius: 6px; padding: 0.75rem;">
+        <div style="font-weight: 700; margin-bottom: 0.2rem;">{{ item.actual }} -> {{ item.predicted }}</div>
+        <div style="color: #8ea1b5;">{{ item.count }} future-sequence predictions landed in the wrong room.</div>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p style="color: #8ea1b5; margin-bottom: 0;">No off-diagonal confusion counts were found in the current holdout split.</p>
+    {% endif %}
+  </section>
+</div>
+
+<div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 1rem; align-items: start;">
+  <section style="background: #18222d; border: 1px solid #2c3e50; border-radius: 8px; padding: 1rem;">
+    <h3 style="margin-top: 0;">Top Signals</h3>
+    {% if features.top %}
+    <table style="width: 100%; border-collapse: collapse;">
+      <thead>
+        <tr style="background: #1f2d3a;">
+          <th style="padding: 0.6rem; text-align: left;">Feature</th>
+          <th style="padding: 0.6rem; text-align: left;">Kind</th>
+          <th style="padding: 0.6rem; text-align: right;">Importance</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in features.top %}
+        <tr style="border-bottom: 1px solid #2c3e50;">
+          <td style="padding: 0.6rem; word-break: break-word;">{{ item.source }}</td>
+          <td style="padding: 0.6rem;">{{ item.kind }}</td>
+          <td style="padding: 0.6rem; text-align: right;">{{ '%.4f'|format(item.importance) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p style="color: #8ea1b5; margin-bottom: 0;">Feature importance is unavailable for this model type or the model is not trained yet.</p>
+    {% endif %}
+  </section>
+
+  <section style="background: #18222d; border: 1px solid #2c3e50; border-radius: 8px; padding: 1rem;">
+    <h3 style="margin-top: 0;">Source Freshness And Missingness</h3>
+    <p style="margin-top: 0; color: #8ea1b5;">Stale means age is at least {{ sources.stale_threshold_seconds or 0 }} seconds in stored raw recordings.</p>
+    {% if sources.by_source %}
+    <table style="width: 100%; border-collapse: collapse;">
+      <thead>
+        <tr style="background: #1f2d3a;">
+          <th style="padding: 0.6rem; text-align: left;">Source</th>
+          <th style="padding: 0.6rem; text-align: left;">Mostly Seen In</th>
+          <th style="padding: 0.6rem; text-align: right;">Missing</th>
+          <th style="padding: 0.6rem; text-align: right;">Stale</th>
+          <th style="padding: 0.6rem; text-align: right;">Avg Age</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for item in sources.by_source %}
+        <tr style="border-bottom: 1px solid #2c3e50;">
+          <td style="padding: 0.6rem; word-break: break-word;">{{ item.source }}</td>
+          <td style="padding: 0.6rem;">{% if item.dominant_label %}{{ item.dominant_label }}{% if item.room_specific %} <span style="color: #7ee787; font-size: 0.85rem;">specific</span>{% endif %}{% else %}-{% endif %}</td>
+          <td style="padding: 0.6rem; text-align: right;">{{ '%.0f'|format(item.missing_rate * 100) }}%</td>
+          <td style="padding: 0.6rem; text-align: right;">{{ '%.0f'|format(item.stale_rate * 100) }}%</td>
+          <td style="padding: 0.6rem; text-align: right;">{% if item.avg_age_seconds is not none %}{{ '%.0f'|format(item.avg_age_seconds) }}s{% else %}-{% endif %}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <p style="color: #8ea1b5; margin-bottom: 0;">No raw recordings available for source analysis yet.</p>
+    {% endif %}
+  </section>
+</div>

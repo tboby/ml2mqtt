@@ -3,7 +3,7 @@ import numpy as np
 from sklearn.preprocessing import LabelEncoder, OrdinalEncoder
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.model_selection import train_test_split, GridSearchCV, RandomizedSearchCV
-from sklearn.metrics import accuracy_score, classification_report
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix
 from sklearn.pipeline import Pipeline
 from sklearn.compose import ColumnTransformer
 import logging
@@ -139,6 +139,22 @@ class KNNClassifier:
             }
         except Exception as e:
             self.logger.error(f"Label stats generation failed: {e}")
+            return None
+
+    def getConfusionMatrix(self) -> Optional[Dict[str, Any]]:
+        if not self._modelTrained or self._pipeline is None:
+            return None
+
+        try:
+            y_pred = self._pipeline.predict(self._X_test)
+            labels = np.arange(len(self.labelEncoder.classes_))
+            matrix = confusion_matrix(self._y_test, y_pred, labels=labels)
+            return {
+                "labels": [str(label) for label in self.labelEncoder.classes_],
+                "matrix": matrix.astype(int).tolist(),
+            }
+        except Exception as e:
+            self.logger.error(f"Confusion matrix generation failed: {e}")
             return None
 
     def optimizeParameters(self, observations: List[ModelObservation]) -> Dict[str, Any]:

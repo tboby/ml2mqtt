@@ -133,6 +133,45 @@ class ModelBindingServiceTest(unittest.TestCase):
         self.assertEqual(self.model.getObservationCount(), 1)
         self.assertFalse(self.mqtt.published)
 
+    def test_import_raw_observations_writes_raw_blob_once(self):
+        raw_save_count = 0
+        original_save_dict = self.store.saveDict
+
+        def counting_save_dict(name, value):
+            nonlocal raw_save_count
+            if name == "raw_observations":
+                raw_save_count += 1
+            return original_save_dict(name, value)
+
+        self.store.saveDict = counting_save_dict
+
+        imported = self.model.importRawObservations([
+            {
+                "time": 100.0,
+                "label": "Kitchen",
+                "sensorValues": {
+                    "sensor.one": 12.5,
+                    build_recency_feature_name("sensor.one"): 0.0,
+                    "sensor.two": 3.1,
+                    build_recency_feature_name("sensor.two"): 0.0,
+                },
+            },
+            {
+                "time": 105.0,
+                "label": "Office",
+                "sensorValues": {
+                    "sensor.one": 4.2,
+                    build_recency_feature_name("sensor.one"): 0.0,
+                    "sensor.two": 8.9,
+                    build_recency_feature_name("sensor.two"): 0.0,
+                },
+            },
+        ], replace_existing=True)
+
+        self.assertEqual(imported, 2)
+        self.assertEqual(raw_save_count, 1)
+        self.assertEqual(self.model.getRawObservationCount(), 2)
+
     def test_eager_replay_rebuilds_model_once_after_batch(self):
         self.model.setLearningType("EAGER")
 
@@ -169,6 +208,47 @@ class ModelBindingServiceTest(unittest.TestCase):
 
         self.assertEqual(self.model.getObservationCount(), 2)
         self.assertEqual(populate_count, 1)
+
+    def test_eager_replay_saves_processor_storage_once(self):
+        self.model.setLearningType("EAGER")
+        self.model.addPreprocessor("rolling_average", {
+            "sensor": [{"SELECT_ALL": True}],
+            "windowSize": 2,
+        })
+
+        processor_storage_save_count = 0
+        original_save_dict = self.store.saveDict
+
+        def counting_save_dict(name, value):
+            nonlocal processor_storage_save_count
+            if name == "processor_storage":
+                processor_storage_save_count += 1
+            return original_save_dict(name, value)
+
+        self.store.saveDict = counting_save_dict
+
+        self.model.replayRawObservations([
+            {
+                "label": "Kitchen",
+                "sensorValues": {
+                    "sensor.one": 12.5,
+                    build_recency_feature_name("sensor.one"): 0.0,
+                    "sensor.two": 3.1,
+                    build_recency_feature_name("sensor.two"): 0.0,
+                },
+            },
+            {
+                "label": "Kitchen",
+                "sensorValues": {
+                    "sensor.one": 13.5,
+                    build_recency_feature_name("sensor.one"): 0.0,
+                    "sensor.two": 4.1,
+                    build_recency_feature_name("sensor.two"): 0.0,
+                },
+            },
+        ])
+
+        self.assertEqual(processor_storage_save_count, 1)
 
     def test_replay_does_not_rebuild_when_learning_is_disabled(self):
         self.model.replayRawObservations([
@@ -305,6 +385,102 @@ class ModelBindingServiceTest(unittest.TestCase):
             "sensor.two": MISSING_SENSOR_RECENCY_SECONDS,
         })
 
+    def test_analysis_summary_highlights_label_and_source_gaps(self):
+        self.model.setLearningType("EAGER")
+        self.model.setModelBinding({
+            "sources": ["sensor.one", "sensor.two"],
+        })
+        self.model.addPreprocessor("null_handler", {
+            "sensor": [{"SELECT_ALL": True}],
+            "replacementType": "float",
+            "nullReplacement": -1,
+        })
+
+        observations = []
+        for index in range(6):
+            observations.append({
+                "time": float(index + 1),
+                "label": "Kitchen",
+                "sensorValues": {
+                    "sensor.one": 10.0 + index,
+                    build_recency_feature_name("sensor.one"): 0.0,
+                    "sensor.two": None if index < 3 else 2.0 + index,
+                    build_recency_feature_name("sensor.two"): MISSING_SENSOR_RECENCY_SECONDS if index < 3 else 0.0,
+                },
+            })
+
+        observations.append({
+            "time": 7.0,
+            "label": "Office",
+            "sensorValues": {
+                "sensor.one": 25.0,
+                build_recency_feature_name("sensor.one"): 0.0,
+                "sensor.two": None,
+                build_recency_feature_name("sensor.two"): MISSING_SENSOR_RECENCY_SECONDS,
+            },
+        })
+
+        self.model.importRawObservations(observations, replace_existing=True)
+        self.model.replayRawObservations(clear_training_data=True, reset_processor_storage=True)
+
+        summary = self.model.getAnalysisSummary()
+        self.assertEqual(summary["overview"]["observation_count"], 7)
+        self.assertEqual(summary["coverage"]["underrepresented_labels"][0]["label"], "Office")
+        self.assertIn("confusion_matrix", summary["quality"])
+        self.assertIn("sequence_evaluation", summary["quality"])
+
+        sensor_two = next(source for source in summary["sources"]["by_source"] if source["source"] == "sensor.two")
+        self.assertGreater(sensor_two["missing_rate"], 0.5)
+        self.assertGreater(sensor_two["stale_rate"], 0.5)
+        self.assertEqual(sensor_two["dominant_label"], "Kitchen")
+
+        recommendation_codes = {item["code"] for item in summary["recommendations"]}
+        self.assertIn("label_needs_more_samples", recommendation_codes)
+
+    def test_sequence_evaluation_tracks_stationary_and_transition_behavior(self):
+        self.model.setLearningType("EAGER")
+        self.model.setModelBinding({
+            "sources": ["sensor.one", "sensor.two"],
+        })
+
+        raw_observations = []
+        samples = [
+            (1.0, "Kitchen", 10.0, 1.0),
+            (2.0, "Kitchen", 10.5, 1.5),
+            (3.0, "Office", 90.0, 100.0),
+            (4.0, "Office", 91.0, 101.0),
+            (5.0, "Kitchen", 11.0, 2.0),
+            (6.0, "Kitchen", 11.5, 2.5),
+            (7.0, "Office", 92.0, 102.0),
+            (8.0, "Office", 93.0, 103.0),
+            (9.0, "Kitchen", 12.0, 3.0),
+            (10.0, "Kitchen", 12.5, 3.5),
+            (11.0, "Office", 94.0, 104.0),
+            (12.0, "Office", 95.0, 105.0),
+        ]
+        for time_value, label, one_value, two_value in samples:
+            raw_observations.append({
+                "time": time_value,
+                "label": label,
+                "sensorValues": {
+                    "sensor.one": one_value,
+                    build_recency_feature_name("sensor.one"): 0.0,
+                    "sensor.two": two_value,
+                    build_recency_feature_name("sensor.two"): 0.0,
+                },
+            })
+
+        self.model.importRawObservations(raw_observations, replace_existing=True)
+        self.model.replayRawObservations(clear_training_data=True, reset_processor_storage=True)
+
+        sequence = self.model.getAnalysisSummary()["quality"]["sequence_evaluation"]
+        self.assertEqual(sequence["method"], "chronological_run_split")
+        self.assertGreater(sequence["train_observations"], 0)
+        self.assertGreater(sequence["test_observations"], 0)
+        self.assertGreaterEqual(sequence["transition_count"], 1)
+        self.assertIsNotNone(sequence["stationary_accuracy"])
+        self.assertIn("labels", sequence["confusion_matrix"])
+
 
 class AdapterApiRoutesTest(unittest.TestCase):
     @classmethod
@@ -425,6 +601,57 @@ class AdapterApiRoutesTest(unittest.TestCase):
         )
         self.assertEqual(recreate_response.status_code, 201)
         self.assertEqual(recreate_response.get_json()["id"], "reusable model")
+
+    def test_analysis_endpoint_returns_model_summary(self):
+        create_response = self.client.post(
+            "/api/v1/models",
+            json={
+                "model_name": "Analysis Model",
+                "labels": ["Kitchen", "Office"],
+                "source_entities": ["sensor.one", "sensor.two"],
+            },
+        )
+        self.assertEqual(create_response.status_code, 201)
+
+        model = self.manager.getModel("analysis model")
+        model.setLearningType("EAGER")
+        raw_observations = [
+            {
+                "time": 1.0,
+                "label": "Kitchen",
+                "sensorValues": {
+                    "sensor.one": 10.0,
+                    build_recency_feature_name("sensor.one"): 0.0,
+                    "sensor.two": 3.0,
+                    build_recency_feature_name("sensor.two"): 0.0,
+                },
+            },
+            {
+                "time": 2.0,
+                "label": "Office",
+                "sensorValues": {
+                    "sensor.one": 2.0,
+                    build_recency_feature_name("sensor.one"): 0.0,
+                    "sensor.two": 9.0,
+                    build_recency_feature_name("sensor.two"): 0.0,
+                },
+            },
+        ]
+        model.importRawObservations(raw_observations, replace_existing=True)
+        model.replayRawObservations(clear_training_data=True, reset_processor_storage=True)
+
+        response = self.client.get("/api/v1/models/Analysis Model/analysis")
+        self.assertEqual(response.status_code, 200)
+
+        payload = response.get_json()
+        self.assertEqual(payload["overview"]["raw_observation_count"], 2)
+        self.assertIn("coverage", payload)
+        self.assertIn("quality", payload)
+        self.assertIn("confusion_matrix", payload["quality"])
+        self.assertIn("sequence_evaluation", payload["quality"])
+        self.assertIn("features", payload)
+        self.assertIn("sources", payload)
+        self.assertIn("recommendations", payload)
 
 
 if __name__ == "__main__":

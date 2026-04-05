@@ -4,6 +4,7 @@ import time
 from collections import Counter
 from copy import deepcopy
 from typing import Any, Dict, List, Optional, Union
+from sklearn.metrics import accuracy_score, confusion_matrix, f1_score
 
 from ModelStore import ModelStore, ModelObservation, EntityKey
 from classifiers.RandomForest import RandomForest, RandomForestParams
@@ -17,6 +18,9 @@ from nodered.nodered_generator import NodeRedGenerator
 DISABLED_LABEL = "Disabled"
 RECENCY_FEATURE_SUFFIX = "__ml2mqtt_age_seconds"
 MISSING_SENSOR_RECENCY_SECONDS = 3600.0
+ANALYSIS_MIN_LABEL_SAMPLES = 5
+ANALYSIS_STALE_AGE_SECONDS = 300.0
+ANALYSIS_SEQUENCE_TEST_SHARE = 0.3
 
 
 def build_recency_feature_name(entityName: str) -> str:
@@ -236,12 +240,15 @@ class ModelService:
         persist_raw: bool = True,
         publish_prediction: bool = True,
         rebuild_model: bool = True,
+        learning_type: Optional[str] = None,
+        processor_storage: Optional[Dict[str, Dict[str, Any]]] = None,
+        persist_processor_storage: bool = True,
     ) -> None:
         observationTime = assignedTime if assignedTime is not None else time.time()
         encodedEntityMap = self._encodeObservationRecency(entityMap, entityAgeMap)
         rawSensorValues, rawSensorRecency = self._splitObservationFeatures(encodedEntityMap)
 
-        learningType = self.getLearningType()
+        learningType = learning_type if learning_type is not None else self.getLearningType()
         shouldUpdateLearningHistory = learningType != "DISABLED" and label != DISABLED_LABEL
 
         if publish_prediction:
@@ -265,9 +272,10 @@ class ModelService:
             self._modelstore.addRawObservation(label, encodedEntityMap, observationTime)
 
         if shouldUpdateLearningHistory:
-            processorStorage = self._getStoredProcessorStorage()
+            processorStorage = processor_storage if processor_storage is not None else self._getStoredProcessorStorage()
             processedEntityMap = self._applyPreprocessors(encodedEntityMap, processorStorage)
-            self._modelstore.saveDict("processor_storage", processorStorage)
+            if persist_processor_storage:
+                self._modelstore.saveDict("processor_storage", processorStorage)
 
             if processedEntityMap:
                 entityValues = {k: v for k, v in processedEntityMap.items() if v is not None}
@@ -437,11 +445,41 @@ class ModelService:
         normalized = [self._normalizeRawObservation(observation) for observation in observations]
 
         if replace_existing:
-            self._modelstore.deleteRawObservations()
+            combined = normalized
+        else:
+            combined = self.getRawObservations() + normalized
 
-        for observation in normalized:
-            self._modelstore.addRawObservation(observation.label, observation.sensorValues, observation.time)
+        combined.sort(key=lambda observation: observation.time)
+        self._modelstore.saveRawObservations(combined)
         return len(normalized)
+
+    def _replayEagerObservations(
+        self,
+        observations: List[ModelObservation],
+        processorStorage: Dict[str, Dict[str, Any]],
+    ) -> int:
+        trainingObservations: List[ModelObservation] = []
+
+        for observation in observations:
+            if observation.label == DISABLED_LABEL:
+                continue
+
+            encodedEntityMap = self._encodeObservationRecency(observation.sensorValues)
+            processedEntityMap = self._applyPreprocessors(encodedEntityMap, processorStorage)
+            if not processedEntityMap:
+                continue
+
+            entityValues = {k: v for k, v in processedEntityMap.items() if v is not None}
+            if not entityValues:
+                continue
+
+            trainingObservations.append(ModelObservation(observation.time, observation.label, entityValues))
+
+        self._modelstore.saveDict("processor_storage", processorStorage)
+        if trainingObservations:
+            self._modelstore.addObservations(trainingObservations)
+        self._populateModel()
+        return len(trainingObservations)
 
     def replayRawObservations(
         self,
@@ -455,12 +493,18 @@ class ModelService:
             normalized = [self._normalizeRawObservation(observation) for observation in observations]
 
         if clear_training_data:
-            self.deleteObservationsSince(0)
-
-        if reset_processor_storage:
-            self._modelstore.saveDict("processor_storage", {})
+            self._modelstore.clearObservations()
 
         learningType = self.getLearningType()
+        processorStorage = {} if reset_processor_storage else self._getStoredProcessorStorage()
+
+        if learningType == "EAGER":
+            self._replayEagerObservations(normalized, processorStorage)
+            return len(normalized)
+
+        if reset_processor_storage:
+            self._modelstore.saveDict("processor_storage", processorStorage)
+
         rebuild_during_replay = learningType != "EAGER"
 
         for observation in normalized:
@@ -471,9 +515,17 @@ class ModelService:
                 persist_raw=False,
                 publish_prediction=False,
                 rebuild_model=rebuild_during_replay,
+                learning_type=learningType,
+                processor_storage=processorStorage,
+                persist_processor_storage=False,
             )
 
+        if normalized and learningType != "DISABLED":
+            self._modelstore.saveDict("processor_storage", processorStorage)
+
         if normalized and not rebuild_during_replay:
+            self._populateModel()
+        elif clear_training_data and (not normalized or learningType == "DISABLED"):
             self._populateModel()
 
         return len(normalized)
@@ -523,6 +575,525 @@ class ModelService:
                     "f1": 0,
                 }        
         return labelStats
+
+    def _getAnalysisSources(self, rawObservations: List[ModelObservation]) -> List[str]:
+        orderedSources: List[str] = []
+        seen = set()
+
+        for sourceName in self._getBindingSourceIds(self.getModelBinding()):
+            if sourceName not in seen:
+                seen.add(sourceName)
+                orderedSources.append(sourceName)
+
+        for observation in rawObservations:
+            for featureName in observation.sensorValues.keys():
+                if is_recency_feature_name(featureName):
+                    sourceName = get_source_entity_name_from_recency_feature(featureName)
+                    if sourceName and sourceName not in seen:
+                        seen.add(sourceName)
+                        orderedSources.append(sourceName)
+                    continue
+                if featureName not in seen:
+                    seen.add(featureName)
+                    orderedSources.append(featureName)
+
+        return orderedSources
+
+    def _createAnalysisModel(self) -> Any:
+        paramsForThisModel = self._allParams.get(self._modelType, {})
+        if self._modelType == "KNN":
+            return KNNClassifier(params=paramsForThisModel)
+        return RandomForest(params=paramsForThisModel)
+
+    def _getUniqueChronologicalObservations(self, observations: List[ModelObservation]) -> List[ModelObservation]:
+        ordered = sorted(observations, key=lambda observation: observation.time)
+        unique: List[ModelObservation] = []
+        seenTimes = set()
+        for observation in ordered:
+            if observation.time in seenTimes:
+                continue
+            seenTimes.add(observation.time)
+            unique.append(observation)
+        return unique
+
+    def _groupObservationRuns(self, observations: List[ModelObservation]) -> List[List[ModelObservation]]:
+        if not observations:
+            return []
+
+        runs: List[List[ModelObservation]] = [[observations[0]]]
+        for observation in observations[1:]:
+            if observation.label == runs[-1][-1].label:
+                runs[-1].append(observation)
+            else:
+                runs.append([observation])
+        return runs
+
+    def _buildEvaluationConfusions(self, labels: List[str], matrix: List[List[int]]) -> List[Dict[str, Any]]:
+        confusionEntries: List[Dict[str, Any]] = []
+        for rowIndex, actualLabel in enumerate(labels):
+            if rowIndex >= len(matrix) or not isinstance(matrix[rowIndex], list):
+                continue
+            row = matrix[rowIndex]
+            for colIndex, predictedLabel in enumerate(labels):
+                if rowIndex == colIndex or colIndex >= len(row):
+                    continue
+                count = int(row[colIndex] or 0)
+                if count <= 0:
+                    continue
+                confusionEntries.append({
+                    "actual": str(actualLabel),
+                    "predicted": str(predictedLabel),
+                    "count": count,
+                })
+        confusionEntries.sort(key=lambda item: (-item["count"], item["actual"], item["predicted"]))
+        return confusionEntries
+
+    def _buildSequenceEvaluation(self, observations: List[ModelObservation]) -> Dict[str, Any]:
+        uniqueObservations = self._getUniqueChronologicalObservations(observations)
+        runs = self._groupObservationRuns(uniqueObservations)
+        if len(uniqueObservations) < 4 or len(runs) < 2:
+            return {}
+
+        totalObservations = len(uniqueObservations)
+        targetTrainSize = max(1, int(totalObservations * (1.0 - ANALYSIS_SEQUENCE_TEST_SHARE)))
+        trainRuns: List[List[ModelObservation]] = []
+        trainSize = 0
+
+        for index, run in enumerate(runs):
+            remainingRuns = len(runs) - index - 1
+            if trainRuns and trainSize >= targetTrainSize and remainingRuns >= 1:
+                break
+            if remainingRuns == 0:
+                break
+            trainRuns.append(run)
+            trainSize += len(run)
+
+        if not trainRuns or len(trainRuns) == len(runs):
+            return {}
+
+        trainObservations = [observation for run in trainRuns for observation in run]
+        testObservations = [observation for run in runs[len(trainRuns):] for observation in run]
+        if not trainObservations or not testObservations:
+            return {}
+
+        candidateModel = self._createAnalysisModel()
+        candidateModel.populateDataframe(trainObservations)
+
+        predictedLabels: List[str] = []
+        actualLabels: List[str] = []
+        for observation in testObservations:
+            predicted, _confidence = candidateModel.predictLabel(observation.sensorValues)
+            predictedLabels.append(str(predicted) if predicted is not None else "__unpredicted__")
+            actualLabels.append(observation.label)
+
+        labelOrder = sorted(set(actualLabels) | set(predictedLabels))
+        matrix = confusion_matrix(actualLabels, predictedLabels, labels=labelOrder).astype(int).tolist()
+        topConfusions = self._buildEvaluationConfusions(labelOrder, matrix)
+
+        stationaryTotal = 0
+        stationaryCorrect = 0
+        transitionCount = 0
+        settledTransitionCount = 0
+        immediateTransitionCount = 0
+        missedTransitionCount = 0
+        lagSteps: List[int] = []
+        lagSeconds: List[float] = []
+
+        for index in range(1, len(testObservations)):
+            current = testObservations[index]
+            previous = testObservations[index - 1]
+            if current.label == previous.label:
+                stationaryTotal += 1
+                if predictedLabels[index] == current.label:
+                    stationaryCorrect += 1
+                continue
+
+            transitionCount += 1
+            newLabel = current.label
+            previousLabel = previous.label
+            runEnd = index
+            while runEnd + 1 < len(testObservations) and testObservations[runEnd + 1].label == newLabel:
+                runEnd += 1
+
+            matchedIndex: Optional[int] = None
+            for candidateIndex in range(index, runEnd + 1):
+                if predictedLabels[candidateIndex] == newLabel:
+                    matchedIndex = candidateIndex
+                    break
+
+            if matchedIndex is None:
+                missedTransitionCount += 1
+            else:
+                settledTransitionCount += 1
+                lagSteps.append(matchedIndex - index)
+                lagSeconds.append(float(testObservations[matchedIndex].time - current.time))
+                if matchedIndex == index:
+                    immediateTransitionCount += 1
+
+        return {
+            "method": "chronological_run_split",
+            "train_observations": len(trainObservations),
+            "test_observations": len(testObservations),
+            "train_runs": len(trainRuns),
+            "test_runs": len(runs) - len(trainRuns),
+            "accuracy": round(float(accuracy_score(actualLabels, predictedLabels)), 4),
+            "macro_f1": round(float(f1_score(actualLabels, predictedLabels, average="macro", zero_division=0)), 4),
+            "stationary_accuracy": round((stationaryCorrect / stationaryTotal), 4) if stationaryTotal else None,
+            "stationary_samples": stationaryTotal,
+            "transition_count": transitionCount,
+            "settled_transition_count": settledTransitionCount,
+            "missed_transition_count": missedTransitionCount,
+            "immediate_transition_rate": round((immediateTransitionCount / transitionCount), 4) if transitionCount else None,
+            "delayed_transition_rate": round(((transitionCount - immediateTransitionCount) / transitionCount), 4) if transitionCount else None,
+            "average_transition_lag_steps": round((sum(lagSteps) / len(lagSteps)), 2) if lagSteps else None,
+            "average_transition_lag_seconds": round((sum(lagSeconds) / len(lagSeconds)), 2) if lagSeconds else None,
+            "confusion_matrix": {
+                "labels": labelOrder,
+                "matrix": matrix,
+            },
+            "top_confusions": topConfusions[:8],
+        }
+
+    def _buildAnalysisRecommendations(
+        self,
+        totalObservations: int,
+        labels: List[str],
+        underrepresentedLabels: List[Dict[str, Any]],
+        emptyLabels: List[Dict[str, Any]],
+        imbalanceRatio: Optional[float],
+        weakLabels: List[Dict[str, Any]],
+        sourceStats: List[Dict[str, Any]],
+        topFeatures: List[Dict[str, Any]],
+        confusionEntries: List[Dict[str, Any]],
+        sequenceEvaluation: Dict[str, Any],
+    ) -> List[Dict[str, str]]:
+        recommendations: List[Dict[str, str]] = []
+
+        recommendedMinimum = max(ANALYSIS_MIN_LABEL_SAMPLES * max(len(labels), 1), ANALYSIS_MIN_LABEL_SAMPLES)
+        if totalObservations < recommendedMinimum:
+            recommendations.append({
+                "severity": "high",
+                "code": "dataset_small",
+                "title": "Collect more training samples overall",
+                "detail": f"This model has {totalObservations} derived observations. Aim for at least {recommendedMinimum} so each label has enough examples.",
+            })
+
+        if emptyLabels:
+            labelNames = ", ".join(item["label"] for item in emptyLabels[:4])
+            recommendations.append({
+                "severity": "high",
+                "code": "empty_labels",
+                "title": "Some labels have no training data",
+                "detail": f"Add observations for {labelNames} before relying on predictions for those labels.",
+            })
+
+        if underrepresentedLabels:
+            weakest = underrepresentedLabels[0]
+            recommendations.append({
+                "severity": "medium",
+                "code": "label_needs_more_samples",
+                "title": "Add more samples for weak labels",
+                "detail": f"{weakest['label']} only has {weakest['count']} observations. Low-count labels are usually the first place the model struggles.",
+            })
+
+        if imbalanceRatio and imbalanceRatio >= 3:
+            recommendations.append({
+                "severity": "medium",
+                "code": "label_imbalance",
+                "title": "Balance the label distribution",
+                "detail": f"The largest label has {imbalanceRatio:.1f}x more samples than the smallest non-empty label. Try collecting more examples for the smaller classes.",
+            })
+
+        if weakLabels:
+            weakest = weakLabels[0]
+            recommendations.append({
+                "severity": "medium",
+                "code": "weak_label_metrics",
+                "title": "Review low-performing labels",
+                "detail": f"{weakest['label']} has recall {weakest['recall']:.2f} and F1 {weakest['f1']:.2f}. Add more representative samples around that room's transitions and edge cases.",
+            })
+
+        stationaryAccuracy = sequenceEvaluation.get("stationary_accuracy")
+        if stationaryAccuracy is not None and stationaryAccuracy < 0.9:
+            recommendations.append({
+                "severity": "high",
+                "code": "stationary_errors",
+                "title": "The model is weak even while staying in one room",
+                "detail": f"Chronological evaluation only gets {stationaryAccuracy * 100:.0f}% of steady-state samples right. Add more stationary examples in the confused rooms before tuning settings.",
+            })
+
+        delayedTransitionRate = sequenceEvaluation.get("delayed_transition_rate")
+        if delayedTransitionRate is not None and delayedTransitionRate > 0.25:
+            lagSeconds = sequenceEvaluation.get("average_transition_lag_seconds")
+            lagText = f" Average lag is about {lagSeconds:.1f}s." if lagSeconds is not None else ""
+            recommendations.append({
+                "severity": "medium",
+                "code": "transition_lag",
+                "title": "Room transitions are too sticky",
+                "detail": f"{delayedTransitionRate * 100:.0f}% of room changes do not switch immediately in chronological evaluation.{lagText} Add transition samples and review stale-reading handling.",
+            })
+
+        staleImportantSource = next(
+            (
+                source
+                for source in sourceStats
+                if source["stale_rate"] >= 0.3
+                and source["combined_importance"] > 0
+                and not source["room_specific"]
+            ),
+            None,
+        )
+        if staleImportantSource is not None:
+            recommendations.append({
+                "severity": "medium",
+                "code": "stale_sensor_signal",
+                "title": "A useful source is stale too often",
+                "detail": f"{staleImportantSource['source']} is stale in {staleImportantSource['stale_rate'] * 100:.0f}% of raw snapshots without being strongly tied to one room. Faster updates or better placement could help this model.",
+            })
+
+        if confusionEntries:
+            topConfusion = confusionEntries[0]
+            recommendations.append({
+                "severity": "info",
+                "code": "top_confusion_pair",
+                "title": "Collect more boundary samples for the most confused rooms",
+                "detail": f"The biggest holdout confusion is {topConfusion['actual']} -> {topConfusion['predicted']} ({topConfusion['count']} times). Add samples during transitions and edge positions between those rooms.",
+            })
+
+        if topFeatures:
+            strongestFeature = topFeatures[0]
+            if strongestFeature["kind"] == "recency":
+                recommendations.append({
+                    "severity": "info",
+                    "code": "recency_matters",
+                    "title": "Recency is a major part of the model",
+                    "detail": f"{strongestFeature['source']} recency is currently the strongest signal. Keep an eye on sensor freshness and stale values when evaluating predictions.",
+                })
+
+        if not recommendations:
+            recommendations.append({
+                "severity": "info",
+                "code": "analysis_healthy",
+                "title": "No obvious weak spots detected",
+                "detail": "Coverage, label metrics, and source freshness look broadly healthy from the current stored data.",
+            })
+
+        return recommendations[:6]
+
+    def getAnalysisSummary(self) -> Dict[str, Any]:
+        rawObservations = self.getRawObservations()
+        observations = self.getObservations()
+        labelCounts = self.getObservationCountsByLabel()
+        totalObservations = sum(labelCounts.values())
+        labels = sorted(set(self.getLabels()) | set(labelCounts.keys()))
+        labelShareMap = {
+            label: ((labelCounts.get(label, 0) / totalObservations) if totalObservations else 0.0)
+            for label in labels
+        }
+        sequenceEvaluation = self._buildSequenceEvaluation(observations)
+        accuracy = self.getAccuracy()
+        labelStats = self.getLabelStats() or {}
+        confusionMatrix = self._model.getConfusionMatrix() or {"labels": [], "matrix": []}
+        featureImportance = self._model.getFeatureImportance() or {}
+        sourceNames = self._getAnalysisSources(rawObservations)
+
+        labelCoverage: List[Dict[str, Any]] = []
+        underrepresentedLabels: List[Dict[str, Any]] = []
+        emptyLabels: List[Dict[str, Any]] = []
+        nonZeroCounts: List[int] = []
+
+        for label in labels:
+            count = int(labelCounts.get(label, 0))
+            share = (count / totalObservations) if totalObservations else 0.0
+            entry = {
+                "label": label,
+                "count": count,
+                "share": round(share, 4),
+                "target_minimum": ANALYSIS_MIN_LABEL_SAMPLES,
+                "needs_more": count < ANALYSIS_MIN_LABEL_SAMPLES,
+            }
+            labelCoverage.append(entry)
+            if count == 0:
+                emptyLabels.append(entry)
+            elif count < ANALYSIS_MIN_LABEL_SAMPLES:
+                underrepresentedLabels.append(entry)
+                nonZeroCounts.append(count)
+            else:
+                nonZeroCounts.append(count)
+
+        imbalanceRatio: Optional[float] = None
+        if len(nonZeroCounts) >= 2 and min(nonZeroCounts) > 0:
+            imbalanceRatio = round(max(nonZeroCounts) / min(nonZeroCounts), 3)
+
+        labelQuality: List[Dict[str, Any]] = []
+        for label in labels:
+            stats = labelStats.get(label, {})
+            labelQuality.append({
+                "label": label,
+                "count": int(labelCounts.get(label, 0)),
+                "support": int(stats.get("support", 0)),
+                "precision": float(stats.get("precision", 0.0)),
+                "recall": float(stats.get("recall", 0.0)),
+                "f1": float(stats.get("f1", 0.0)),
+            })
+
+        weakLabels = [
+            label
+            for label in sorted(labelQuality, key=lambda item: (item["f1"], item["recall"], item["count"], item["label"]))
+            if label["count"] > 0 and (label["f1"] < 0.6 or label["recall"] < 0.6)
+        ]
+
+        confusionEntries: List[Dict[str, Any]] = []
+        matrixLabels = confusionMatrix.get("labels", []) if isinstance(confusionMatrix, dict) else []
+        matrixRows = confusionMatrix.get("matrix", []) if isinstance(confusionMatrix, dict) else []
+        for rowIndex, rowLabel in enumerate(matrixLabels):
+            if rowIndex >= len(matrixRows) or not isinstance(matrixRows[rowIndex], list):
+                continue
+            row = matrixRows[rowIndex]
+            for colIndex, predictedLabel in enumerate(matrixLabels):
+                if rowIndex == colIndex or colIndex >= len(row):
+                    continue
+                count = int(row[colIndex] or 0)
+                if count <= 0:
+                    continue
+                confusionEntries.append({
+                    "actual": str(rowLabel),
+                    "predicted": str(predictedLabel),
+                    "count": count,
+                })
+        confusionEntries.sort(key=lambda item: (-item["count"], item["actual"], item["predicted"]))
+
+        topFeatures: List[Dict[str, Any]] = []
+        for featureName, importance in sorted(featureImportance.items(), key=lambda item: item[1], reverse=True):
+            normalizedImportance = float(importance)
+            if normalizedImportance <= 0:
+                continue
+            sourceName = get_source_entity_name_from_recency_feature(featureName) if is_recency_feature_name(featureName) else featureName
+            topFeatures.append({
+                "name": featureName,
+                "source": sourceName,
+                "kind": "recency" if is_recency_feature_name(featureName) else "value",
+                "importance": round(normalizedImportance, 4),
+            })
+        topFeatures = topFeatures[:10]
+
+        sourceStats: List[Dict[str, Any]] = []
+        for sourceName in sourceNames:
+            recencyFeatureName = build_recency_feature_name(sourceName)
+            rawValues: List[Any] = []
+            ages: List[float] = []
+            missingCount = 0
+            staleCount = 0
+            presentByLabel: Counter[str] = Counter()
+
+            for observation in rawObservations:
+                value = observation.sensorValues.get(sourceName)
+                rawValues.append(value)
+                if value is None:
+                    missingCount += 1
+                else:
+                    presentByLabel[observation.label] += 1
+
+                rawAge = observation.sensorValues.get(recencyFeatureName)
+                try:
+                    ageSeconds = max(0.0, float(rawAge))
+                    ages.append(ageSeconds)
+                    if ageSeconds >= ANALYSIS_STALE_AGE_SECONDS:
+                        staleCount += 1
+                except (TypeError, ValueError):
+                    pass
+
+            snapshotCount = len(rawObservations)
+            presentCount = snapshotCount - missingCount
+            missingRate = (missingCount / snapshotCount) if snapshotCount else 0.0
+            staleRate = (staleCount / snapshotCount) if snapshotCount else 0.0
+            dominantLabel = None
+            dominantLabelShare = 0.0
+            dominantLabelLift = None
+            if presentByLabel:
+                dominantLabel, dominantCount = presentByLabel.most_common(1)[0]
+                dominantLabelShare = dominantCount / max(presentCount, 1)
+                baselineShare = labelShareMap.get(dominantLabel, 0.0)
+                if baselineShare > 0:
+                    dominantLabelLift = dominantLabelShare / baselineShare
+            sourceStats.append({
+                "source": sourceName,
+                "snapshots": snapshotCount,
+                "present_count": presentCount,
+                "present_rate": round((presentCount / snapshotCount), 4) if snapshotCount else 0.0,
+                "missing_rate": round(missingRate, 4),
+                "avg_age_seconds": round(sum(ages) / len(ages), 1) if ages else None,
+                "max_age_seconds": round(max(ages), 1) if ages else None,
+                "stale_rate": round(staleRate, 4),
+                "dominant_label": dominantLabel,
+                "dominant_label_share": round(dominantLabelShare, 4) if dominantLabel is not None else None,
+                "dominant_label_lift": round(dominantLabelLift, 2) if dominantLabelLift is not None else None,
+                "room_specific": dominantLabel is not None and presentCount >= ANALYSIS_MIN_LABEL_SAMPLES and (dominantLabelLift or 0.0) >= 2.0,
+                "value_importance": round(float(featureImportance.get(sourceName, 0.0)), 4),
+                "recency_importance": round(float(featureImportance.get(recencyFeatureName, 0.0)), 4),
+                "combined_importance": round(
+                    float(featureImportance.get(sourceName, 0.0)) + float(featureImportance.get(recencyFeatureName, 0.0)),
+                    4,
+                ),
+            })
+
+        sourceStats.sort(key=lambda item: (-item["combined_importance"], -item["stale_rate"], item["source"]))
+
+        recommendationConfusions = sequenceEvaluation.get("top_confusions") or confusionEntries
+
+        recommendations = self._buildAnalysisRecommendations(
+            totalObservations=totalObservations,
+            labels=labels,
+            underrepresentedLabels=underrepresentedLabels,
+            emptyLabels=emptyLabels,
+            imbalanceRatio=imbalanceRatio,
+            weakLabels=weakLabels,
+            sourceStats=sourceStats,
+            topFeatures=topFeatures,
+            confusionEntries=recommendationConfusions,
+            sequenceEvaluation=sequenceEvaluation,
+        )
+
+        return {
+            "overview": {
+                "observation_count": len(observations),
+                "raw_observation_count": len(rawObservations),
+                "source_count": len(sourceNames),
+                "label_count": len(labels),
+                "learning_type": self.getLearningType(),
+                "model_type": self.getModelType(),
+                "accuracy": round(float(accuracy), 4) if accuracy is not None else None,
+                "feature_importance_available": bool(featureImportance),
+            },
+            "coverage": {
+                "labels": labelCoverage,
+                "total_observations": totalObservations,
+                "underrepresented_labels": underrepresentedLabels,
+                "empty_labels": emptyLabels,
+                "imbalance_ratio": imbalanceRatio,
+                "recommended_min_per_label": ANALYSIS_MIN_LABEL_SAMPLES,
+            },
+            "quality": {
+                "labels": sorted(labelQuality, key=lambda item: (item["f1"], item["recall"], item["label"])),
+                "weak_labels": weakLabels[:5],
+                "confusion_matrix": {
+                    "labels": [str(label) for label in matrixLabels],
+                    "matrix": matrixRows,
+                },
+                "top_confusions": confusionEntries[:8],
+                "sequence_evaluation": sequenceEvaluation,
+            },
+            "features": {
+                "top": topFeatures,
+                "top_recency": [feature for feature in topFeatures if feature["kind"] == "recency"][:5],
+                "top_value": [feature for feature in topFeatures if feature["kind"] == "value"][:5],
+            },
+            "sources": {
+                "by_source": sourceStats,
+                "stale_threshold_seconds": ANALYSIS_STALE_AGE_SECONDS,
+            },
+            "recommendations": recommendations,
+        }
 
     def deleteObservationsByLabel(self, label: str) -> None:
         """Delete all observations with the given label."""

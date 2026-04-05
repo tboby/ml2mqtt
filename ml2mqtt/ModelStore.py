@@ -199,6 +199,30 @@ class ModelStore:
             self.logger.exception("Exception while adding observation")
             raise
 
+    def addObservations(self, observations: List[ModelObservation]) -> None:
+        if not observations:
+            return
+
+        for observation in observations:
+            for sensor in observation.sensorValues:
+                if sensor not in self._entityKeySet:
+                    self._addSensorType(sensor, observation.sensorValues[sensor])
+
+        formatStr = self._generateFormatString()
+        rows = []
+        try:
+            for observation in observations:
+                values = [self._getDbValue(observation.sensorValues.get(entity.name)) for entity in self._entityKeys]
+                packed = struct.pack(formatStr, *values)
+                rows.append((observation.time, observation.label, packed))
+
+            with self.lock, self._db:
+                self._db.executemany("INSERT INTO Observations (time, label, data) VALUES (?, ?, ?)", rows)
+                self._db.commit()
+        except Exception:
+            self.logger.exception("Exception while adding observations batch")
+            raise
+
     def _rewriteObservations(self, observations: List[ModelObservation]) -> None:
         ordered = sorted(observations, key=lambda observation: observation.time)
 
@@ -251,6 +275,18 @@ class ModelStore:
         })
         self.saveDict("raw_observations", {"items": raw_list})
 
+    def saveRawObservations(self, observations: List[ModelObservation]) -> None:
+        self.saveDict("raw_observations", {
+            "items": [
+                {
+                    "time": observation.time,
+                    "label": observation.label,
+                    "sensorValues": observation.sensorValues,
+                }
+                for observation in observations
+            ]
+        })
+
     def getRawObservations(self) -> List[ModelObservation]:
         observations: List[ModelObservation] = []
         raw = self.getDict("raw_observations")
@@ -274,6 +310,15 @@ class ModelStore:
 
     def deleteRawObservations(self) -> None:
         self.saveDict("raw_observations", {"items": []})
+
+    def clearObservations(self) -> None:
+        with self.lock, self._db:
+            self._db.execute("DELETE FROM Observations")
+            self._db.execute("DELETE FROM SensorKeys")
+            self._db.commit()
+
+        self._entityKeys = []
+        self._entityKeySet = set()
 
     def getEntityKeys(self):
         return self._entityKeys
