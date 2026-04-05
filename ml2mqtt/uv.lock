@@ -37,6 +37,18 @@ wheels = [
 ]
 
 [[package]]
+name = "daal"
+version = "2025.11.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "tbb" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/5a/22/2e2973d8a01abf2621d93ff729e96b7ced84d633bf781504a6486f574d05/daal-2025.11.0-py2.py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:0d9d0c0e3daee02ae9cfadfe469c4b453e706f3f9bf208f8c4519b59a997a41a", size = 111469862, upload-time = "2026-03-03T15:27:26.025Z" },
+    { url = "https://files.pythonhosted.org/packages/e1/e2/6ae96cef7ae204f90017f7a803e1eb6a89d1fb2cc3c5a0333741790c9a7b/daal-2025.11.0-py2.py3-none-win_amd64.whl", hash = "sha256:8eaaed71500b8438e67fe459ff0b0ef90d45e54b44741e94e9b30812fc296c2f", size = 82597354, upload-time = "2026-03-03T15:27:10.25Z" },
+]
+
+[[package]]
 name = "flask"
 version = "3.1.3"
 source = { registry = "https://pypi.org/simple" }
@@ -168,6 +180,7 @@ dependencies = [
     { name = "paho-mqtt" },
     { name = "pandas" },
     { name = "scikit-learn" },
+    { name = "scikit-learn-intelex" },
     { name = "waitress" },
 ]
 
@@ -179,6 +192,7 @@ requires-dist = [
     { name = "paho-mqtt", specifier = ">=2.1,<3.0" },
     { name = "pandas", specifier = ">=2.2,<3.0" },
     { name = "scikit-learn", specifier = ">=1.4,<2.0" },
+    { name = "scikit-learn-intelex", specifier = ">=2024.0" },
     { name = "waitress", specifier = ">=3.0,<4.0" },
 ]
 
@@ -396,6 +410,28 @@ wheels = [
 ]
 
 [[package]]
+name = "scikit-learn-intelex"
+version = "2025.11.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "daal" },
+    { name = "numpy" },
+    { name = "scikit-learn" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/5b/c2/06ed3620a3302a8d61e3ee9250e5425c4f21a72e844b8b30be913d964857/scikit_learn_intelex-2025.11.0-py310-none-manylinux_2_28_x86_64.whl", hash = "sha256:51101bc158a24bd661d9088c8806f0269063d368b018839e842f671fd6f7bb38", size = 4923445, upload-time = "2026-03-03T15:27:34.811Z" },
+    { url = "https://files.pythonhosted.org/packages/fc/79/8b8fb973f4d32a9e0bb31a24671831fd5314f9dea6752667a3e118fea885/scikit_learn_intelex-2025.11.0-py310-none-win_amd64.whl", hash = "sha256:39f3f3039d7ac974486936c92e26b3349a4ede7115cd268a2aa95abd09541409", size = 3125589, upload-time = "2026-03-03T15:26:50.647Z" },
+    { url = "https://files.pythonhosted.org/packages/74/39/e084c81a43b5eb8ca339c64fe38bbf8bcfaa1240b7d3e246474b42d53d6c/scikit_learn_intelex-2025.11.0-py311-none-manylinux_2_28_x86_64.whl", hash = "sha256:319d15a8e6cd7cd2c26ff01f759dbafe5bf2a88c9572d4787a28429ad9cc6919", size = 4879558, upload-time = "2026-03-03T15:27:51.127Z" },
+    { url = "https://files.pythonhosted.org/packages/a1/41/56c7d99d8af2089262366e3b04833654f4183c1c7484cb0917eb88184551/scikit_learn_intelex-2025.11.0-py311-none-win_amd64.whl", hash = "sha256:f515cb02acc8e7a95ee1ecc9600b475a9a2efd777375319ff7eccbd185483da7", size = 3129183, upload-time = "2026-03-03T15:27:14.076Z" },
+    { url = "https://files.pythonhosted.org/packages/d4/1f/b75bc317dce82f494861641f2c03260817a0995196da3fead4453593aa7a/scikit_learn_intelex-2025.11.0-py312-none-manylinux_2_28_x86_64.whl", hash = "sha256:a472999fda54e8e9f5ded1ba083e28a239fc5a645ffbc8fc6b5a178ec88c9ab4", size = 4858218, upload-time = "2026-03-03T15:27:30.105Z" },
+    { url = "https://files.pythonhosted.org/packages/0c/b2/23906e16a4f7669afd1dfb0f0a1efb7bcc0953274fda40c4ef7d7cd8b876/scikit_learn_intelex-2025.11.0-py312-none-win_amd64.whl", hash = "sha256:9d3fba1ddc8dbde8bb5b7feba68277e1112acf8acc74e46a3acb076b0348901a", size = 3211842, upload-time = "2026-03-03T15:26:53.469Z" },
+    { url = "https://files.pythonhosted.org/packages/c0/10/9cb7459aeba5857594d31096f1d3ddd7ae09b9d65f3ef8f708703833fcad/scikit_learn_intelex-2025.11.0-py313-none-manylinux_2_28_x86_64.whl", hash = "sha256:d1bbea02a0aae1707193e61dcff718b573056059a070faf1f1cc9ce2864b70c9", size = 4859093, upload-time = "2026-03-03T15:27:42.185Z" },
+    { url = "https://files.pythonhosted.org/packages/41/71/5b4f4acdba4a8f73a32ffde3552792e90bc786f68cb390c61c254151b6b4/scikit_learn_intelex-2025.11.0-py313-none-win_amd64.whl", hash = "sha256:65eb1bbf8e9c71be7fbaecff05c661dbd081e427eb698c6281922f6fb6bf57ca", size = 3211429, upload-time = "2026-03-03T15:26:59.301Z" },
+    { url = "https://files.pythonhosted.org/packages/8b/fb/ff9f4f3995efab4b81693e68f98fc90effdf29f11fb8cfa72a55bf68fa70/scikit_learn_intelex-2025.11.0-py314-none-manylinux_2_28_x86_64.whl", hash = "sha256:1f4a526bb0be513f41b0c70608b447d792f999daf9af76e2771e587774d47a15", size = 4873981, upload-time = "2026-03-03T15:27:37.242Z" },
+    { url = "https://files.pythonhosted.org/packages/ff/5b/6e3caff8c961b6c5bded81aa742f9c69e90ba19fcb17b930889170e94dab/scikit_learn_intelex-2025.11.0-py314-none-win_amd64.whl", hash = "sha256:400d6ff9e2db5df72c1b4d4d95fa539f41aaff14f4c77dee6cdcdd5c15d9b450", size = 3208454, upload-time = "2026-03-03T15:27:18.15Z" },
+]
+
+[[package]]
 name = "scipy"
 version = "1.17.1"
 source = { registry = "https://pypi.org/simple" }
@@ -473,6 +509,27 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/94/e7/b2c673351809dca68a0e064b6af791aa332cf192da575fd474ed7d6f16a2/six-1.17.0.tar.gz", hash = "sha256:ff70335d468e7eb6ec65b95b99d3a2836546063f63acc5171de367e834932a81", size = 34031, upload-time = "2024-12-04T17:35:28.174Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/b7/ce/149a00dd41f10bc29e5921b496af8b574d8413afcd5e30dfa0ed46c2cc5e/six-1.17.0-py2.py3-none-any.whl", hash = "sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274", size = 11050, upload-time = "2024-12-04T17:35:26.475Z" },
+]
+
+[[package]]
+name = "tbb"
+version = "2022.3.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "tcmlib" },
+]
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/08/59/8d381a2cfe8d36c4f4ff9f94769ff2809bfc16014d888360b0e24c7e5c6b/tbb-2022.3.1-py2.py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:534c089eca6bcf148408684c156229d5f09c01d323b685b15739f41985b529d7", size = 4178630, upload-time = "2026-01-22T05:30:20.589Z" },
+    { url = "https://files.pythonhosted.org/packages/68/ef/d01ec56a854949efc727c8cac8941325a2020f345a786e64ca6ad3a05611/tbb-2022.3.1-py3-none-win_amd64.whl", hash = "sha256:8187e4c50a77c75c51ca9395febddd3a67d88dcb4cc537947d68d244925710f7", size = 422729, upload-time = "2026-01-22T05:30:51.916Z" },
+]
+
+[[package]]
+name = "tcmlib"
+version = "1.4.1"
+source = { registry = "https://pypi.org/simple" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/a1/a4/38e8b5a27b66ab286168ba6c449771ed71d71ec76524e7f12401474a5151/tcmlib-1.4.1-py2.py3-none-manylinux_2_28_x86_64.whl", hash = "sha256:0d5bd98db48d31bec7fedba5c23599bf9ae43c7016d4c3946d25242d320cee89", size = 2731276, upload-time = "2025-10-22T17:57:02.392Z" },
+    { url = "https://files.pythonhosted.org/packages/eb/4d/2b1d55dba475f602197e284b9a5e5460139a9c5ef2bfb63c8d2a1fafc163/tcmlib-1.4.1-py2.py3-none-win_amd64.whl", hash = "sha256:5202a1fd8541182fbd4ef72848784e4bf94340152d7ddff33d401d30930fa53c", size = 370347, upload-time = "2025-10-22T18:00:36.37Z" },
 ]
 
 [[package]]
