@@ -35,7 +35,6 @@ class Ml2MqttClassPresenceSensor(CoordinatorEntity[Ml2MqttCoordinator], BinarySe
         unique_prefix = coordinator.legacy_unique_prefix or f"{entry.entry_id}_{coordinator.model_slug}"
         self._attr_unique_id = f"{unique_prefix}_class_{safe_slug(label)}"
         self._attr_name = f"{coordinator.model_name} {label}"
-        self._attr_device_class = "presence"
 
     @property
     def device_info(self) -> DeviceInfo:
@@ -52,7 +51,7 @@ class Ml2MqttClassPresenceSensor(CoordinatorEntity[Ml2MqttCoordinator], BinarySe
         last_seen = self.coordinator.class_last_seen.get(self._label)
         if last_seen is None:
             return False
-        return (time.time() - last_seen) <= CLASS_PRESENCE_WINDOW_SECONDS
+        return (time.monotonic() - last_seen) <= (CLASS_PRESENCE_WINDOW_SECONDS + 0.5)
 
     @property
     def extra_state_attributes(self):
@@ -60,6 +59,6 @@ class Ml2MqttClassPresenceSensor(CoordinatorEntity[Ml2MqttCoordinator], BinarySe
         return {
             "label": self._label,
             "model_id": self.coordinator.model_id,
-            "last_seen": last_seen,
-            "seconds_ago": time.time() - last_seen if last_seen is not None else None,
+            "last_seen_monotonic": last_seen,
+            "seconds_ago": time.monotonic() - last_seen if last_seen is not None else None,
         }
