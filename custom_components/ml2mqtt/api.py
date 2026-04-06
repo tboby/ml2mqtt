@@ -83,3 +83,13 @@ class Ml2MqttApiClient:
                 {"learning_type": learning_type},
             )
         )
+
+    async def async_list_raw_observations(self, model_id: str) -> list[dict[str, Any]]:
+        data = await self._request("GET", f"/api/v1/models/{model_id}/raw-observations")
+        observations = data.get("observations", [])
+        if not isinstance(observations, list):
+            return []
+        return [observation for observation in observations if isinstance(observation, dict)]
+
+    async def async_import_raw_observations(self, model_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+        return await self._request("POST", f"/api/v1/models/{model_id}/raw-observations/import", payload)

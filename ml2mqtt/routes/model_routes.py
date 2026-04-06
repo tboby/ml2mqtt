@@ -164,6 +164,9 @@ def init_model_routes(model_manager: ModelManager):
         inputCount: int,
         defaultValue: Any,
         binding: Optional[Dict[str, Any]] = None,
+        modelSettings: Optional[Dict[str, Any]] = None,
+        preprocessors: Optional[List[Dict[str, Any]]] = None,
+        postprocessors: Optional[List[Dict[str, Any]]] = None,
     ):
         newModel = model_manager.addModel(modelName)
         newModel.setMqttTopic(mqttTopic)
@@ -172,10 +175,36 @@ def init_model_routes(model_manager: ModelManager):
         newModel.setModelConfig("input_count", inputCount)
         if binding is not None:
             newModel.setModelBinding(binding)
-        newModel.addPreprocessor("type_caster", { 'sensor': [{"SELECT_ALL": True }]})
-        newModel.addPreprocessor("null_handler", { 'sensor': [{"SELECT_ALL": True }], 'replacementType': 'float', 'nullReplacement': defaultValue})
-        newModel.addPostprocessor("only_diff", {})
-        newModel.setLearningType("EAGER")
+
+        if modelSettings is not None:
+            newModel.setModelSettings(modelSettings)
+
+        if preprocessors is not None:
+            for preprocessor in preprocessors:
+                if not isinstance(preprocessor, dict):
+                    continue
+                preprocessorType = str(preprocessor.get("type") or "").strip()
+                preprocessorConfig = preprocessor.get("config", {})
+                if not preprocessorType or not isinstance(preprocessorConfig, dict):
+                    continue
+                newModel.addPreprocessor(preprocessorType, preprocessorConfig)
+        else:
+            newModel.addPreprocessor("type_caster", { 'sensor': [{"SELECT_ALL": True }]})
+            newModel.addPreprocessor("null_handler", { 'sensor': [{"SELECT_ALL": True }], 'replacementType': 'float', 'nullReplacement': defaultValue})
+
+        if postprocessors is not None:
+            for postprocessor in postprocessors:
+                if not isinstance(postprocessor, dict):
+                    continue
+                postprocessorType = str(postprocessor.get("type") or "").strip()
+                postprocessorConfig = postprocessor.get("config", {})
+                if not postprocessorType or not isinstance(postprocessorConfig, dict):
+                    continue
+                newModel.addPostprocessor(postprocessorType, postprocessorConfig)
+        else:
+            newModel.addPostprocessor("only_diff", {})
+
+        newModel.setLearningType(str((modelSettings or {}).get("learning_type") or "EAGER"))
         newModel.subscribeToMqttTopics()
         return newModel
 
@@ -256,8 +285,21 @@ def init_model_routes(model_manager: ModelManager):
             binding = _build_binding_payload(modelName, data)
             sourceCount = len(binding.get("sources", [])) if binding else 0
             inputCount = getInputCount(data.get("input_count"), sourceCount)
+            modelSettings = data.get("model_settings") if isinstance(data.get("model_settings"), dict) else None
+            preprocessors = data.get("preprocessors") if isinstance(data.get("preprocessors"), list) else None
+            postprocessors = data.get("postprocessors") if isinstance(data.get("postprocessors"), list) else None
 
-            model = createOrConfigureModel(modelName, mqttTopic, labels, inputCount, defaultValue, binding)
+            model = createOrConfigureModel(
+                modelName,
+                mqttTopic,
+                labels,
+                inputCount,
+                defaultValue,
+                binding,
+                modelSettings=modelSettings,
+                preprocessors=preprocessors,
+                postprocessors=postprocessors,
+            )
             return jsonify(_serialize_model(_canonical_model_id(model, modelName), model, include_bridge=True)), 201
         except ValueError as e:
             return jsonify({"error": str(e)}), 400

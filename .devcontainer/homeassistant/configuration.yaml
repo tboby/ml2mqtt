@@ -31,10 +31,34 @@ input_number:
     step: 25
     mode: slider
     initial: 300
+  ml2mqtt_test_temperature_2:
+    name: ML2MQTT Test Temperature 2
+    min: 16
+    max: 30
+    step: 0.5
+    mode: slider
+    initial: 21
+  ml2mqtt_test_humidity_2:
+    name: ML2MQTT Test Humidity 2
+    min: 20
+    max: 80
+    step: 1
+    mode: slider
+    initial: 45
+  ml2mqtt_test_illuminance_2:
+    name: ML2MQTT Test Illuminance 2
+    min: 0
+    max: 1000
+    step: 25
+    mode: slider
+    initial: 300
 
 input_boolean:
   ml2mqtt_test_motion:
     name: ML2MQTT Test Motion
+    initial: false
+  ml2mqtt_test_motion_2:
+    name: ML2MQTT Test Motion 2
     initial: false
 
 template:
@@ -57,6 +81,26 @@ template:
       - name: ML2MQTT Test Motion Score
         unique_id: ml2mqtt_test_motion_score
         state: "{{ 100 if is_state('input_boolean.ml2mqtt_test_motion', 'on') else 0 }}"
+        unit_of_measurement: "%"
+        icon: mdi:motion-sensor
+      - name: ML2MQTT Test Temperature Sensor 2
+        unique_id: ml2mqtt_test_temperature_sensor_2
+        state: "{{ states('input_number.ml2mqtt_test_temperature_2') }}"
+        unit_of_measurement: "C"
+        icon: mdi:thermometer
+      - name: ML2MQTT Test Humidity Sensor 2
+        unique_id: ml2mqtt_test_humidity_sensor_2
+        state: "{{ states('input_number.ml2mqtt_test_humidity_2') }}"
+        unit_of_measurement: "%"
+        icon: mdi:water-percent
+      - name: ML2MQTT Test Illuminance Sensor 2
+        unique_id: ml2mqtt_test_illuminance_sensor_2
+        state: "{{ states('input_number.ml2mqtt_test_illuminance_2') }}"
+        unit_of_measurement: "lx"
+        icon: mdi:brightness-6
+      - name: ML2MQTT Test Motion Score 2
+        unique_id: ml2mqtt_test_motion_score_2
+        state: "{{ 100 if is_state('input_boolean.ml2mqtt_test_motion_2', 'on') else 0 }}"
         unit_of_measurement: "%"
         icon: mdi:motion-sensor
 

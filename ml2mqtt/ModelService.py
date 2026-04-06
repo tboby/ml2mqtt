@@ -1507,9 +1507,12 @@ class ModelService:
         summary.update({
             "learning_type": self.getLearningType(),
             "model_type": self.getModelType(),
+            "model_settings": self.getModelSettings(),
             "observation_count": self.getObservationCount(),
             "raw_observation_count": self.getRawObservationCount(),
             "label_counts": self.getObservationCountsByLabel(),
+            "preprocessors": [processor.to_dict() for processor in self.getPreprocessors()],
+            "postprocessors": [processor.to_dict() for processor in self.getPostprocessors()],
             "bridge_status": self.getBridgeStatus(),
         })
         return summary

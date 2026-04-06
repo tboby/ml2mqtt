@@ -63,3 +63,69 @@ ml2mqtt_test_preset_study:
     - service: input_boolean.turn_off
       target:
         entity_id: input_boolean.ml2mqtt_test_motion
+
+ml2mqtt_test_preset_kitchen_2:
+  alias: ML2MQTT Test Preset Kitchen 2
+  sequence:
+    - service: input_number.set_value
+      target:
+        entity_id: input_number.ml2mqtt_test_temperature_2
+      data:
+        value: 24
+    - service: input_number.set_value
+      target:
+        entity_id: input_number.ml2mqtt_test_humidity_2
+      data:
+        value: 55
+    - service: input_number.set_value
+      target:
+        entity_id: input_number.ml2mqtt_test_illuminance_2
+      data:
+        value: 700
+    - service: input_boolean.turn_on
+      target:
+        entity_id: input_boolean.ml2mqtt_test_motion_2
+
+ml2mqtt_test_preset_living_room_2:
+  alias: ML2MQTT Test Preset Living Room 2
+  sequence:
+    - service: input_number.set_value
+      target:
+        entity_id: input_number.ml2mqtt_test_temperature_2
+      data:
+        value: 21
+    - service: input_number.set_value
+      target:
+        entity_id: input_number.ml2mqtt_test_humidity_2
+      data:
+        value: 42
+    - service: input_number.set_value
+      target:
+        entity_id: input_number.ml2mqtt_test_illuminance_2
+      data:
+        value: 260
+    - service: input_boolean.turn_on
+      target:
+        entity_id: input_boolean.ml2mqtt_test_motion_2
+
+ml2mqtt_test_preset_study_2:
+  alias: ML2MQTT Test Preset Study 2
+  sequence:
+    - service: input_number.set_value
+      target:
+        entity_id: input_number.ml2mqtt_test_temperature_2
+      data:
+        value: 19
+    - service: input_number.set_value
+      target:
+        entity_id: input_number.ml2mqtt_test_humidity_2
+      data:
+        value: 35
+    - service: input_number.set_value
+      target:
+        entity_id: input_number.ml2mqtt_test_illuminance_2
+      data:
+        value: 450
+    - service: input_boolean.turn_off
+      target:
+        entity_id: input_boolean.ml2mqtt_test_motion_2

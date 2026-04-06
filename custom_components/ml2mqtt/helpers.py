@@ -116,6 +116,74 @@ def build_entity_aliases(source_entities: Sequence[str]) -> dict[str, str]:
     return {entity_id: f"input_{idx}" for idx, entity_id in enumerate(source_entities)}
 
 
+RECENCY_FEATURE_SUFFIX = "__ml2mqtt_age_seconds"
+
+
+def build_recency_feature_name(feature_name: str) -> str:
+    return f"{feature_name}{RECENCY_FEATURE_SUFFIX}"
+
+
+def get_binding_feature_names(binding: Mapping[str, Any] | None) -> list[str]:
+    if not isinstance(binding, Mapping):
+        return []
+
+    aliases = binding.get("entity_aliases", {})
+    if not isinstance(aliases, Mapping):
+        aliases = {}
+
+    feature_names: list[str] = []
+    for source in binding.get("sources", []):
+        if not isinstance(source, Mapping):
+            continue
+        entity_id = str(source.get("entity_id") or "").strip()
+        if not entity_id:
+            continue
+        feature_names.append(str(aliases.get(entity_id) or entity_id))
+    return feature_names
+
+
+def remap_observations_to_binding(
+    observations: Sequence[Mapping[str, Any]],
+    source_binding: Mapping[str, Any] | None,
+    target_binding: Mapping[str, Any] | None,
+) -> list[dict[str, Any]]:
+    source_features = get_binding_feature_names(source_binding)
+    target_features = get_binding_feature_names(target_binding)
+    if bool(source_features) != bool(target_features):
+        raise ValueError("Source and target bindings must both define mappable inputs")
+    if source_features and target_features and len(source_features) != len(target_features):
+        raise ValueError("Source and target bindings must expose the same number of inputs")
+
+    feature_map = {
+        source_feature: target_feature
+        for source_feature, target_feature in zip(source_features, target_features)
+    }
+
+    remapped_observations: list[dict[str, Any]] = []
+    for observation in observations:
+        payload = dict(observation)
+        raw_sensor_values = payload.get("sensorValues")
+        if not isinstance(raw_sensor_values, Mapping):
+            raise ValueError("Each observation must include a sensorValues mapping")
+
+        remapped_sensor_values: dict[str, Any] = {}
+        for key, value in raw_sensor_values.items():
+            normalized_key = str(key)
+            remapped_key = feature_map.get(normalized_key)
+            if remapped_key is None and normalized_key.endswith(RECENCY_FEATURE_SUFFIX):
+                source_feature_name = normalized_key[: -len(RECENCY_FEATURE_SUFFIX)]
+                target_feature_name = feature_map.get(source_feature_name)
+                if target_feature_name is not None:
+                    remapped_key = build_recency_feature_name(target_feature_name)
+
+            remapped_sensor_values[remapped_key or normalized_key] = value
+
+        payload["sensorValues"] = remapped_sensor_values
+        remapped_observations.append(payload)
+
+    return remapped_observations
+
+
 def build_snapshot_payload(
     sources: Sequence[Mapping[str, Any]],
     source_snapshots: Mapping[str, Mapping[str, Any]],

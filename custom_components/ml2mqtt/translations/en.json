@@ -128,34 +128,70 @@
           }
         }
       },
-      "rebind_model": {
-        "title": "Update model inputs",
-        "description": "Change which Home Assistant entities are sent into one of the models managed by this integration.",
-        "data": {
-          "model_id": "Model",
-          "source_entities": "Source entities"
+        "rebind_model": {
+          "title": "Update model inputs",
+          "description": "Change which Home Assistant entities are sent into one of the models managed by this integration.",
+          "data": {
+            "model_id": "Model",
+            "source_entities": "Source entities"
         },
         "data_description": {
-          "model_id": "Choose the managed ML2MQTT model you want to update.",
-          "source_entities": "Select the Home Assistant entities whose current states should be sent to the model."
-        }
-      },
-      "remove_model": {
-        "title": "Remove managed model",
-        "description": "Remove one model from this Home Assistant integration and clear its ML2MQTT binding.",
-        "data": {
-          "model_id": "Model"
+            "model_id": "Choose the managed ML2MQTT model you want to update.",
+            "source_entities": "Select the Home Assistant entities whose current states should be sent to the model."
+          }
+        },
+        "clone_model": {
+          "title": "Clone model with observations",
+          "description": "Choose the source model and the new model name first. On the next step you will map each source input to a target Home Assistant entity.",
+          "data": {
+            "source_model_id": "Source model",
+            "model_name": "New model name"
+          },
+          "data_description": {
+            "source_model_id": "Choose the model whose labels and stored raw observations should be copied.",
+            "model_name": "This becomes the new cloned model name in ML2MQTT and Home Assistant."
+          }
+        },
+        "clone_model_inputs": {
+          "title": "Map cloned inputs",
+          "description": "Pick one target entity for each source input shown below. The source entity IDs are the labels, and each dropdown should point at the matching sensor on the new device.",
+          "data_description": {
+            "input_guide": "Map each source input to the equivalent target entity in the same semantic order."
+          }
+        },
+        "import_observations": {
+          "title": "Import observations",
+          "description": "Copy raw observations from one ML2MQTT model into a managed model and rebuild its training data.",
+          "data": {
+            "source_model_id": "Source model",
+            "target_model_id": "Target model",
+            "replace_existing": "Replace existing observations"
+          },
+          "data_description": {
+            "source_model_id": "Choose the model to copy raw observations from.",
+            "target_model_id": "Choose the managed model that should receive the copied observations.",
+            "replace_existing": "Enable this to wipe the target model's raw observations before importing the copied ones."
+          }
+        },
+        "remove_model": {
+          "title": "Remove managed model",
+          "description": "Remove one model from this Home Assistant integration and clear its ML2MQTT binding.",
+          "data": {
+            "model_id": "Model"
         },
         "data_description": {
           "model_id": "Choose the model to remove from this integration."
         }
       }
     },
-    "error": {
-      "cannot_connect": "Failed to connect to the ML2MQTT app API.",
-      "invalid_labels": "Add at least two possible predictions.",
-      "model_not_found": "The selected model is no longer available."
-    },
+      "error": {
+        "cannot_connect": "Failed to connect to the ML2MQTT app API.",
+        "invalid_labels": "Add at least two possible predictions.",
+        "model_not_found": "The selected model is no longer available.",
+        "incompatible_bindings": "The source and target models do not expose the same number of inputs.",
+        "same_model_import": "Choose different source and target models.",
+        "invalid_clone_mapping": "Choose a different target entity for each source input."
+      },
     "abort": {
       "no_available_models": "No available ML2MQTT models were found for this action.",
       "no_configured_models": "This integration is not currently managing any ML2MQTT models."
